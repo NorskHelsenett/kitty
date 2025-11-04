@@ -358,7 +358,7 @@ async function main() {
 
   // Initialize agent and UI (Ink-based, no longer needs blessed screen)
   const agent = new AIAgent(apiKey, baseURL);
-  const ui = new ChatUI(null, agent, isDebugMode ? debugLog : undefined);
+  const ui = new ChatUI(null, agent, isDebugMode ? debugLog : undefined, isDebugMode);
 
   // Initialize and run the UI - this will block until the app exits
   await ui.initialize();

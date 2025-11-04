@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Box, Text, useInput, useApp, useStdout } from 'ink';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Box, Text, useInput, useApp, useStdout, Static } from 'ink';
 import TextInput from 'ink-text-input';
 import chalk from 'chalk';
 import { marked } from 'marked';
@@ -44,12 +44,61 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [thinkingStep, setThinkingStep] = useState<ThinkingStep | null>(null);
   const [initialized, setInitialized] = useState(false);
   const [tokenSpeed, setTokenSpeed] = useState<number>(0);
+  const [lastTokenSpeed, setLastTokenSpeed] = useState<number>(0);
   const [streamStartTime, setStreamStartTime] = useState<number>(0);
   const [streamTokenCount, setStreamTokenCount] = useState<number>(0);
+  const [catFrame, setCatFrame] = useState(0);
   const { exit } = useApp();
   const { stdout } = useStdout();
-  const lastUpdateRef = useRef<number>(0);
+  
+  // Use refs for throttling to reduce flickering
+  const lastUpdateTimeRef = useRef<number>(0);
   const pendingUpdateRef = useRef<string | null>(null);
+  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const tokenUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cat animation effect - only when processing
+  useEffect(() => {
+    if (isProcessing) {
+      const interval = setInterval(() => {
+        setCatFrame(prev => (prev + 1) % 4);
+      }, 400);
+      
+      return () => clearInterval(interval);
+    }
+  }, [isProcessing]);
+
+  // Token speed update effect - runs during processing
+  useEffect(() => {
+    if (isProcessing) {
+      tokenUpdateIntervalRef.current = setInterval(() => {
+        const elapsed = (Date.now() - streamStartTime) / 1000;
+        if (elapsed > 0) {
+          const currentUsage = agent.getTokenUsage();
+          setStreamTokenCount(currentUsage.currentTokens);
+          const speed = currentUsage.currentTokens / elapsed;
+          setTokenSpeed(speed);
+        }
+      }, 200); // Update every 200ms
+      
+      return () => {
+        if (tokenUpdateIntervalRef.current) {
+          clearInterval(tokenUpdateIntervalRef.current);
+          tokenUpdateIntervalRef.current = null;
+        }
+      };
+    } else {
+      if (tokenUpdateIntervalRef.current) {
+        clearInterval(tokenUpdateIntervalRef.current);
+        tokenUpdateIntervalRef.current = null;
+      }
+      // Save the last speed before resetting
+      if (tokenSpeed > 0) {
+        setLastTokenSpeed(tokenSpeed);
+      }
+      setTokenSpeed(0);
+    }
+  }, [isProcessing, streamStartTime, agent]);
 
   useEffect(() => {
     (async () => {
@@ -84,12 +133,43 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   }, []);
 
   const updateLastMessage = useCallback((content: string) => {
-    setMessages(prev => {
-      if (prev.length === 0) return prev;
-      const newMessages = [...prev];
-      newMessages[newMessages.length - 1].content = content;
-      return newMessages;
-    });
+    const now = Date.now();
+    
+    // Store the pending update
+    pendingUpdateRef.current = content;
+    
+    // If enough time has passed, update immediately
+    if (now - lastUpdateTimeRef.current >= 100) {
+      lastUpdateTimeRef.current = now;
+      setMessages(prev => {
+        if (prev.length === 0) return prev;
+        const newMessages = [...prev];
+        newMessages[newMessages.length - 1].content = content;
+        return newMessages;
+      });
+      pendingUpdateRef.current = null;
+      
+      // Clear any pending timeout
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+        updateTimeoutRef.current = null;
+      }
+    } else if (!updateTimeoutRef.current) {
+      // Schedule an update for later
+      updateTimeoutRef.current = setTimeout(() => {
+        if (pendingUpdateRef.current !== null) {
+          lastUpdateTimeRef.current = Date.now();
+          setMessages(prev => {
+            if (prev.length === 0) return prev;
+            const newMessages = [...prev];
+            newMessages[newMessages.length - 1].content = pendingUpdateRef.current!;
+            return newMessages;
+          });
+          pendingUpdateRef.current = null;
+        }
+        updateTimeoutRef.current = null;
+      }, 100);
+    }
   }, []);
 
   const updateMessageAtIndex = useCallback((index: number, content: string) => {
@@ -161,14 +241,6 @@ Important: Use the write_file tool to create KITTY.md with complete content, not
               setStreamStartTime(Date.now());
             } else {
               updateLastMessage(fullResponse);
-            }
-            
-            // Update token speed
-            const elapsed = (Date.now() - streamStartTime) / 1000;
-            if (elapsed > 0) {
-              const currentUsage = agent.getTokenUsage();
-              setStreamTokenCount(currentUsage.currentTokens);
-              setTokenSpeed(currentUsage.currentTokens / elapsed);
             }
           },
           (tool: any) => {
@@ -285,14 +357,6 @@ This file provides persistent project context to the AI agent.`);
             updateLastMessage(fullResponse);
           }
           
-          // Update token speed
-          const elapsed = (Date.now() - streamStartTime) / 1000;
-          if (elapsed > 0) {
-            const currentUsage = agent.getTokenUsage();
-            setStreamTokenCount(currentUsage.currentTokens);
-            setTokenSpeed(currentUsage.currentTokens / elapsed);
-          }
-          
           setStatus('AI responding...');
         },
         (tool: any) => {
@@ -350,36 +414,30 @@ This file provides persistent project context to the AI agent.`);
     }
   };
 
-  // Memoize formatted messages - parse markdown only when messages change
-  const formattedMessages = useMemo(() => {
-    return messages.slice(-20).map((msg) => {
-      if (msg.role === 'assistant') {
-        try {
-          return { ...msg, formatted: marked(msg.content) as string };
-        } catch (e) {
-          return { ...msg, formatted: msg.content };
-        }
+  // Format messages - only show last 20
+  const formattedMessages = messages.slice(-20).map((msg) => {
+    if (msg.role === 'assistant') {
+      try {
+        return { ...msg, formatted: marked(msg.content) as string };
+      } catch (e) {
+        return { ...msg, formatted: msg.content };
       }
-      return { ...msg, formatted: msg.content };
-    });
-  }, [messages]);
-
-  // Memoize token usage calculations
-  const tokenInfo = useMemo(() => {
-    const usage = agent.getTokenUsage();
-    const tokenManager = agent.getTokenManager();
-    const usageText = tokenManager.formatUsage(usage);
-    const usageColor = tokenManager.getUsageColor(usage);
-    
-    let icon = '●';
-    if (usage.percentageUsed >= 90) {
-      icon = '⚠';
-    } else if (usage.percentageUsed >= 70) {
-      icon = '◐';
     }
-    
-    return { usageText, usageColor, icon };
-  }, [messages, streamTokenCount]); // Re-calculate when messages or token count changes
+    return { ...msg, formatted: msg.content };
+  });
+
+  // Get token usage info
+  const usage = agent.getTokenUsage();
+  const tokenManager = agent.getTokenManager();
+  const usageText = tokenManager.formatUsage(usage);
+  const usageColor = tokenManager.getUsageColor(usage);
+  
+  let tokenIcon = '●';
+  if (usage.percentageUsed >= 90) {
+    tokenIcon = '⚠';
+  } else if (usage.percentageUsed >= 70) {
+    tokenIcon = '◐';
+  }
 
   const getKittyAnimation = () => {
     const animations = [
@@ -388,8 +446,7 @@ This file provides persistent project context to the AI agent.`);
       '=^•ﻌ•^=',
       '=^..^=',
     ];
-    const index = Math.floor(Date.now() / 500) % animations.length;
-    return animations[index];
+    return animations[catFrame];
   };
 
   const getActivityDescription = (step: { type: string; content: string }): string => {
@@ -416,9 +473,9 @@ This file provides persistent project context to the AI agent.`);
   };
 
   const getStatusText = () => {
+    const kitty = getKittyAnimation();
+    
     if (isProcessing) {
-      const kitty = getKittyAnimation();
-      
       if (thinkingStep) {
         const activity = getActivityDescription(thinkingStep);
         return `${kitty} ${activity}`;
@@ -435,7 +492,7 @@ This file provides persistent project context to the AI agent.`);
         }
       }
     } else {
-      return `✓ ${status}`;
+      return `${kitty} ${status}`;
     }
   };
 
@@ -474,31 +531,42 @@ This file provides persistent project context to the AI agent.`);
 
   return (
     <Box flexDirection="column">
-      {/* Header */}
-      <Box borderStyle="single" borderColor="cyan" paddingX={1} flexShrink={0}>
-        <Text bold color="cyan">
-          🤖 AI Chat Agent with Tools
-        </Text>
-      </Box>
-
-      {/* Messages area - flexible growth */}
+      {/* Messages area - use Static for completed messages to reduce re-renders */}
       <Box flexDirection="column" flexGrow={1} paddingX={1} paddingY={1}>
-        {formattedMessages.map((msg, idx) => (
-          <Box key={idx} flexDirection="column" marginBottom={1}>
-            {getMessagePrefix(msg.role) && (
-              <Text bold color={getMessageColor(msg.role)}>
-                {getMessagePrefix(msg.role)}
+        {formattedMessages.length > 1 && (
+          <Static items={formattedMessages.slice(0, -1)}>
+            {(msg, idx) => (
+              <Box key={idx} flexDirection="column" marginBottom={1}>
+                {getMessagePrefix(msg.role) && (
+                  <Text bold color={getMessageColor(msg.role)}>
+                    {getMessagePrefix(msg.role)}
+                  </Text>
+                )}
+                <Text color={getMessageColor(msg.role)}>
+                  {msg.formatted}
+                </Text>
+              </Box>
+            )}
+          </Static>
+        )}
+        
+        {/* Render the last (potentially streaming) message separately */}
+        {formattedMessages.length > 0 && (
+          <Box flexDirection="column" marginBottom={1}>
+            {getMessagePrefix(formattedMessages[formattedMessages.length - 1].role) && (
+              <Text bold color={getMessageColor(formattedMessages[formattedMessages.length - 1].role)}>
+                {getMessagePrefix(formattedMessages[formattedMessages.length - 1].role)}
               </Text>
             )}
-            <Text color={getMessageColor(msg.role)}>
-              {msg.formatted}
+            <Text color={getMessageColor(formattedMessages[formattedMessages.length - 1].role)}>
+              {formattedMessages[formattedMessages.length - 1].formatted}
             </Text>
           </Box>
-        ))}
+        )}
       </Box>
 
       {/* Status bar */}
-      <Box borderStyle="single" borderColor="cyan" paddingX={1} flexShrink={0}>
+      <Box borderStyle="round" borderColor="cyan" paddingX={1} flexShrink={0}>
         <Text color={isProcessing ? 'yellow' : 'green'}>
           {getStatusText()}
         </Text>
@@ -506,17 +574,17 @@ This file provides persistent project context to the AI agent.`);
 
       {/* Token usage bar */}
       <Box paddingX={1} flexShrink={0}>
-        <Text color={tokenInfo.usageColor as any}>
-          {tokenInfo.icon} Tokens: {tokenInfo.usageText}
-          {debugMode && isProcessing && tokenSpeed > 0 && (
-            <Text color="cyan"> • {tokenSpeed.toFixed(1)} tok/s</Text>
+        <Text color={usageColor as any}>
+          {tokenIcon} Tokens: {usageText}
+          {(tokenSpeed > 0 || lastTokenSpeed > 0) && (
+            <Text color="cyan"> • {(tokenSpeed > 0 ? tokenSpeed : lastTokenSpeed).toFixed(1)} tok/s</Text>
           )}
         </Text>
       </Box>
 
       {/* Input box - always at bottom */}
-      <Box borderStyle="single" borderColor="green" paddingX={1} flexShrink={0}>
-        <Text bold color="cyan">You: </Text>
+      <Box borderStyle="round" borderColor="green" paddingX={1} flexShrink={0}>
+        <Text bold color="greenBright">You: </Text>
         <TextInput
           value={input}
           onChange={setInput}

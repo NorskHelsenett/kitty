@@ -9,11 +9,11 @@ export class ChatUI {
   private debugLog?: (data: any) => void;
   private renderInstance: any;
 
-  constructor(screen: any, agent: AIAgent, debugLog?: (data: any) => void) {
+  constructor(screen: any, agent: AIAgent, debugLog?: (data: any) => void, debugMode?: boolean) {
     // screen parameter is ignored for Ink compatibility
     this.agent = agent;
     this.debugLog = debugLog;
-    this.debugMode = !!debugLog;
+    this.debugMode = debugMode ?? !!debugLog;
   }
 
   async initialize(): Promise<void> {
