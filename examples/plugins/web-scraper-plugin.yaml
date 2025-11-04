@@ -1,0 +1,132 @@
+manifest:
+  name: web-scraper
+  version: 1.0.0
+  description: |
+    Web scraping and HTTP request tools for fetching and analyzing web content.
+    Useful for gathering information from websites, APIs, and online resources.
+  author: Kitty Team
+  license: MIT
+  main: index.js
+
+code: |
+  /**
+   * Web Scraper Plugin for Kitty
+   * 
+   * Provides tools for making HTTP requests and scraping web content.
+   */
+
+  export const tools = [
+    {
+      name: 'fetch_url',
+      description: 'Fetch content from a URL. Supports various HTTP methods and headers.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: {
+            type: 'string',
+            description: 'The URL to fetch'
+          },
+          method: {
+            type: 'string',
+            enum: ['GET', 'POST', 'PUT', 'DELETE', 'HEAD'],
+            description: 'HTTP method (default: GET)'
+          },
+          headers: {
+            type: 'object',
+            description: 'Optional HTTP headers'
+          },
+          body: {
+            type: 'string',
+            description: 'Request body (for POST/PUT)'
+          }
+        },
+        required: ['url']
+      },
+      execute: async (params) => {
+        try {
+          const options = {
+            method: params.method || 'GET',
+            headers: params.headers || {}
+          };
+          
+          if (params.body && (params.method === 'POST' || params.method === 'PUT')) {
+            options.body = params.body;
+          }
+          
+          const response = await fetch(params.url, options);
+          const content = await response.text();
+          
+          return JSON.stringify({
+            status: response.status,
+            statusText: response.statusText,
+            headers: Object.fromEntries(response.headers.entries()),
+            body: content.substring(0, 10000) // Limit to first 10KB
+          }, null, 2);
+        } catch (error) {
+          return `Error fetching URL: ${error.message}`;
+        }
+      }
+    },
+    {
+      name: 'parse_html',
+      description: 'Extract text content and metadata from HTML. Simple parsing without external dependencies.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          html: {
+            type: 'string',
+            description: 'HTML content to parse'
+          },
+          extract: {
+            type: 'string',
+            enum: ['text', 'title', 'links', 'meta'],
+            description: 'What to extract from the HTML'
+          }
+        },
+        required: ['html', 'extract']
+      },
+      execute: async (params) => {
+        try {
+          const html = params.html;
+          
+          switch (params.extract) {
+            case 'title':
+              const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+              return titleMatch ? titleMatch[1] : 'No title found';
+              
+            case 'text':
+              // Simple HTML tag removal
+              const text = html
+                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+                .replace(/<[^>]+>/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+              return text.substring(0, 5000); // Limit output
+              
+            case 'links':
+              const linkRegex = /<a\s+(?:[^>]*?\s+)?href=(["'])(.*?)\1/gi;
+              const links = [];
+              let match;
+              while ((match = linkRegex.exec(html)) !== null) {
+                links.push(match[2]);
+              }
+              return JSON.stringify(links.slice(0, 50), null, 2);
+              
+            case 'meta':
+              const metaRegex = /<meta\s+(?:name|property)=(["'])([^"']+)\1\s+content=(["'])([^"']+)\3/gi;
+              const meta = {};
+              while ((match = metaRegex.exec(html)) !== null) {
+                meta[match[2]] = match[4];
+              }
+              return JSON.stringify(meta, null, 2);
+              
+            default:
+              return 'Invalid extract type';
+          }
+        } catch (error) {
+          return `Error parsing HTML: ${error.message}`;
+        }
+      }
+    }
+  ];

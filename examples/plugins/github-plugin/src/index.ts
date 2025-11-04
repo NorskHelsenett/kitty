@@ -1,0 +1,203 @@
+/**
+ * GitHub Plugin - TypeScript Source
+ * 
+ * Build with: bun run build
+ * This generates dist/index.js which is referenced in the plugin manifest
+ */
+
+interface Tool {
+  name: string;
+  description: string;
+  inputSchema: any;
+  execute: (params: any) => Promise<string>;
+}
+
+const getRepoInfo: Tool = {
+  name: 'github_repo_info',
+  description: 'Get information about a GitHub repository',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      owner: {
+        type: 'string',
+        description: 'Repository owner (username or organization)'
+      },
+      repo: {
+        type: 'string',
+        description: 'Repository name'
+      }
+    },
+    required: ['owner', 'repo']
+  },
+  execute: async (params: { owner: string; repo: string }): Promise<string> => {
+    try {
+      const url = `https://api.github.com/repos/${params.owner}/${params.repo}`;
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Kitty-AI-Agent'
+        }
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          return `Repository ${params.owner}/${params.repo} not found`;
+        }
+        return `Error: ${response.status} ${response.statusText}`;
+      }
+
+      const data: any = await response.json();
+
+      return JSON.stringify({
+        name: data.name,
+        full_name: data.full_name,
+        description: data.description,
+        stars: data.stargazers_count,
+        forks: data.forks_count,
+        open_issues: data.open_issues_count,
+        language: data.language,
+        license: data.license?.spdx_id || 'None',
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+        homepage: data.homepage,
+        archived: data.archived,
+        disabled: data.disabled,
+      }, null, 2);
+    } catch (error: any) {
+      return `Error: ${error.message}`;
+    }
+  }
+};
+
+const listRepoCommits: Tool = {
+  name: 'github_list_commits',
+  description: 'List recent commits from a GitHub repository',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      owner: {
+        type: 'string',
+        description: 'Repository owner'
+      },
+      repo: {
+        type: 'string',
+        description: 'Repository name'
+      },
+      limit: {
+        type: 'number',
+        description: 'Number of commits to fetch (default: 10, max: 100)'
+      }
+    },
+    required: ['owner', 'repo']
+  },
+  execute: async (params: { owner: string; repo: string; limit?: number }): Promise<string> => {
+    try {
+      const limit = Math.min(params.limit || 10, 100);
+      const url = `https://api.github.com/repos/${params.owner}/${params.repo}/commits?per_page=${limit}`;
+      
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Kitty-AI-Agent'
+        }
+      });
+
+      if (!response.ok) {
+        return `Error: ${response.status} ${response.statusText}`;
+      }
+
+      const commits: any[] = await response.json();
+
+      const commitList = commits.map(commit => ({
+        sha: commit.sha.substring(0, 7),
+        message: commit.commit.message.split('\n')[0],
+        author: commit.commit.author.name,
+        date: commit.commit.author.date,
+      }));
+
+      return JSON.stringify(commitList, null, 2);
+    } catch (error: any) {
+      return `Error: ${error.message}`;
+    }
+  }
+};
+
+const checkRepoMaintenance: Tool = {
+  name: 'github_check_maintenance',
+  description: 'Check if a GitHub repository appears to be actively maintained',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      owner: {
+        type: 'string',
+        description: 'Repository owner'
+      },
+      repo: {
+        type: 'string',
+        description: 'Repository name'
+      }
+    },
+    required: ['owner', 'repo']
+  },
+  execute: async (params: { owner: string; repo: string }): Promise<string> => {
+    try {
+      // Get repo info and recent commits
+      const [repoResponse, commitsResponse] = await Promise.all([
+        fetch(`https://api.github.com/repos/${params.owner}/${params.repo}`, {
+          headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Kitty-AI-Agent' }
+        }),
+        fetch(`https://api.github.com/repos/${params.owner}/${params.repo}/commits?per_page=1`, {
+          headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Kitty-AI-Agent' }
+        })
+      ]);
+
+      if (!repoResponse.ok || !commitsResponse.ok) {
+        return 'Error: Unable to fetch repository information';
+      }
+
+      const repo: any = await repoResponse.json();
+      const commits: any[] = await commitsResponse.json();
+
+      const lastCommitDate = commits[0]?.commit?.author?.date;
+      const monthsSinceLastCommit = lastCommitDate 
+        ? (Date.now() - new Date(lastCommitDate).getTime()) / (1000 * 60 * 60 * 24 * 30)
+        : Infinity;
+
+      const isArchived = repo.archived;
+      const isDisabled = repo.disabled;
+      const hasRecentActivity = monthsSinceLastCommit < 6;
+
+      let status = 'maintained';
+      if (isArchived || isDisabled) {
+        status = 'archived';
+      } else if (monthsSinceLastCommit > 12) {
+        status = 'unmaintained';
+      } else if (monthsSinceLastCommit > 6) {
+        status = 'stale';
+      }
+
+      return JSON.stringify({
+        repository: `${params.owner}/${params.repo}`,
+        status,
+        archived: isArchived,
+        disabled: isDisabled,
+        last_commit_date: lastCommitDate,
+        months_since_last_commit: Math.round(monthsSinceLastCommit * 10) / 10,
+        open_issues: repo.open_issues_count,
+        recommendation: status === 'maintained' 
+          ? 'Repository appears actively maintained' 
+          : status === 'archived'
+          ? 'Repository is archived and no longer maintained'
+          : 'Repository may not be actively maintained - use with caution'
+      }, null, 2);
+    } catch (error: any) {
+      return `Error: ${error.message}`;
+    }
+  }
+};
+
+export const tools: Tool[] = [
+  getRepoInfo,
+  listRepoCommits,
+  checkRepoMaintenance
+];

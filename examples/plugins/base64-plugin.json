@@ -1,0 +1,11 @@
+{
+  "manifest": {
+    "name": "base64",
+    "version": "1.0.0",
+    "description": "Encode and decode base64 strings",
+    "author": "Kitty Team",
+    "license": "MIT",
+    "main": "index.js"
+  },
+  "code": "/**\n * Base64 Plugin for Kitty\n * \n * Simple plugin for base64 encoding/decoding.\n * Demonstrates working with text transformations.\n */\n\nexport const tools = [\n  {\n    name: 'base64_encode',\n    description: 'Encode text to base64 format. Use when users need to encode data for transmission or storage.',\n    inputSchema: {\n      type: 'object',\n      properties: {\n        text: {\n          type: 'string',\n          description: 'Text to encode to base64'\n        }\n      },\n      required: ['text']\n    },\n    execute: async (params) => {\n      try {\n        if (!params.text) {\n          return 'Error: Text is required';\n        }\n        \n        const encoded = Buffer.from(params.text, 'utf-8').toString('base64');\n        return `Encoded: ${encoded}`;\n      } catch (error) {\n        return `Error encoding to base64: ${error.message}`;\n      }\n    }\n  },\n  {\n    name: 'base64_decode',\n    description: 'Decode base64 encoded text back to original format. Use when users need to decode base64 data.',\n    inputSchema: {\n      type: 'object',\n      properties: {\n        encoded: {\n          type: 'string',\n          description: 'Base64 encoded string to decode'\n        }\n      },\n      required: ['encoded']\n    },\n    execute: async (params) => {\n      try {\n        if (!params.encoded) {\n          return 'Error: Encoded text is required';\n        }\n        \n        const decoded = Buffer.from(params.encoded, 'base64').toString('utf-8');\n        return `Decoded: ${decoded}`;\n      } catch (error) {\n        return `Error decoding from base64: ${error.message}. Make sure the input is valid base64.`;\n      }\n    }\n  }\n];"
+}

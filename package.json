@@ -1,0 +1,58 @@
+{
+  "name": "kitty",
+  "version": "1.0.0",
+  "description": "Beautiful TUI terminal AI chat client with agent capabilities",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "kitty": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target node",
+    "build:release": "bash scripts/build-release.sh",
+    "start": "bun run dist/index.js",
+    "repl": "bun run examples/repl.ts",
+    "demo": "bun run examples/simple-cli.ts",
+    "demo:agent": "bun run examples/agent-demo.ts",
+    "test:orchestrator": "bun run test-orchestrator.ts",
+    "test:external-code": "bun run test-external-code.ts",
+    "plugin:list": "bun run src/index.ts plugin list",
+    "plugin:install": "bun run src/index.ts plugin install",
+    "agent:demo": "bun run examples/agent-demo.ts",
+    "install:global": "./install-global.sh",
+    "version:patch": "npm version patch",
+    "version:minor": "npm version minor",
+    "version:major": "npm version major"
+  },
+  "keywords": [
+    "ai",
+    "chat",
+    "tui",
+    "terminal",
+    "agent",
+    "kitty"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "highlight.js": "^11.9.0",
+    "ink": "^4.4.1",
+    "ink-text-input": "^5.0.1",
+    "js-yaml": "^4.1.0",
+    "marked": "^11.1.1",
+    "marked-terminal": "^7.0.0",
+    "openai": "^4.63.0",
+    "react": "^18.2.0",
+    "tiktoken": "^1.0.22"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/marked-terminal": "^3.1.3",
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.0",
+    "bun-types": "latest",
+    "react-devtools-core": "^7.0.1"
+  }
+}

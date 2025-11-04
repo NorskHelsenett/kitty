@@ -1,0 +1,15 @@
+manifest:
+  name: github
+  version: 1.0.0
+  description: |
+    GitHub API integration for repository information and maintenance checking.
+    
+    Built with TypeScript for better type safety and maintainability.
+    Build this plugin with: cd examples/plugins/github-plugin && bun run build
+  author: Kitty Team
+  license: MIT
+  main: index.js
+
+# Reference the built code file
+# Run 'bun run build' in the github-plugin directory first
+codeFile: ./github-plugin/dist/index.js

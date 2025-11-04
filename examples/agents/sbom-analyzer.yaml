@@ -1,0 +1,94 @@
+name: sbom-analyzer
+version: 1.0.0
+description: |
+  Analyzes Software Bill of Materials (SBOM) files to extract package information,
+  verify repository status, and check for unmaintained dependencies.
+  
+  Supports multiple package ecosystems including npm, Go, .NET, PyPI, and more.
+  
+author: Kitty Team
+license: MIT
+
+variables:
+  sbom_file: ""
+  output_format: "markdown"
+
+tasks:
+  - name: read_sbom
+    description: Read and parse the SBOM file
+    tool: read_file
+    input:
+      path: "${sbom_file}"
+    output: sbom_content
+
+  - name: extract_packages
+    description: Extract package information and PURLs from SBOM
+    prompt: |
+      Analyze the following SBOM content and extract all package URLs (PURLs).
+      For each package, extract:
+      - Package URL (PURL)
+      - Package name
+      - Version
+      - Ecosystem/type (npm, go, nuget, pypi, etc.)
+      
+      SBOM Content:
+      ${sbom_content}
+      
+      Return the results as a JSON array with objects containing: purl, name, version, ecosystem
+    output: packages_list
+
+  - name: analyze_first_package
+    description: Analyze the first package in detail
+    condition: packages_list exists
+    prompt: |
+      For this package, extract the following information from the PURL:
+      ${packages_list}
+      
+      Extract:
+      1. Git repository URL (if available in the PURL or need to look it up)
+      2. License information
+      3. Latest version available
+      
+      Return as JSON with keys: repo_url, license, latest_version
+    output: package_info
+
+  - name: check_repo_status
+    description: Check if the repository is maintained
+    condition: package_info exists
+    tool: execute_command
+    input:
+      command: git ls-remote ${package_info.repo_url} HEAD
+    output: repo_check
+
+  - name: analyze_commit_history
+    description: Clone repo and analyze recent commits to determine maintenance status
+    condition: repo_check exists
+    prompt: |
+      Based on the git repository information, determine if this repository is actively maintained.
+      
+      Repository: ${package_info.repo_url}
+      
+      Criteria for "unmaintained":
+      - No commits in the last 12 months
+      - Open issues with no response
+      - Deprecated or archived status
+      
+      Analyze and return: maintained (boolean), last_activity (date), status (active/stale/unmaintained)
+    output: maintenance_status
+
+  - name: generate_report
+    description: Generate final security and maintenance report
+    prompt: |
+      Generate a comprehensive report for the analyzed package(s):
+      
+      Package Information: ${packages_list}
+      Repository: ${package_info}
+      Maintenance Status: ${maintenance_status}
+      
+      Format the report as ${output_format} with:
+      - Executive Summary
+      - Package Details
+      - Security Concerns
+      - Maintenance Status
+      - Recommendations
+    output: final_report
