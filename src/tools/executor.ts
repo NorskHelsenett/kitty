@@ -10,6 +10,14 @@ const execAsync = promisify(exec);
 // Registry for custom plugin tools
 const customTools = new Map<string, Tool>();
 
+// Confirmation callback for tools that require user approval
+export type ConfirmationCallback = (toolName: string, input: any, details?: string) => Promise<boolean>;
+let confirmationCallback: ConfirmationCallback | null = null;
+
+export function setConfirmationCallback(callback: ConfirmationCallback | null): void {
+  confirmationCallback = callback;
+}
+
 export function registerCustomTool(tool: Tool): void {
   customTools.set(tool.name, tool);
 }
@@ -22,7 +30,29 @@ export function getCustomTools(): Tool[] {
   return Array.from(customTools.values());
 }
 
+// Tools that require confirmation before execution
+const toolsRequiringConfirmation = new Set(['write_file']);
+
 export async function executeTool(toolName: string, input: any): Promise<string> {
+  // Check if tool requires confirmation
+  if (toolsRequiringConfirmation.has(toolName) && confirmationCallback) {
+    let details = '';
+    
+    if (toolName === 'write_file') {
+      const contentPreview = input.content?.substring(0, 200) || '';
+      const truncated = (input.content?.length || 0) > 200 ? '...' : '';
+      details = `File: ${input.path}\nSize: ${input.content?.length || 0} bytes\nPreview:\n${contentPreview}${truncated}`;
+    }
+    
+    const confirmed = await confirmationCallback(toolName, input, details);
+    if (!confirmed) {
+      return JSON.stringify({
+        tool: toolName,
+        markdown: '**Action cancelled by user**',
+        cancelled: true
+      }, null, 2);
+    }
+  }
   try {
     let result: string;
     

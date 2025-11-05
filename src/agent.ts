@@ -5,6 +5,8 @@ import { Orchestrator, ThinkingStep, Task } from './orchestrator.js';
 import { ProjectContext, loadProjectContext, buildSystemMessageWithContext } from './project-context.js';
 import { TokenManager, TokenUsage } from './token-manager.js';
 import { PluginManager } from './plugin-manager.js';
+import { AgentManager } from './agent-manager.js';
+import { config, getDefaultModel } from './config.js';
 
 export class AIAgent {
   private client: OpenAI;
@@ -12,16 +14,23 @@ export class AIAgent {
   private conversationHistory: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
   private projectContext?: ProjectContext;
   private tokenManager: TokenManager;
-  private modelName: string = 'nhn-large:fast';
+  private modelName: string;
   private pluginManager: PluginManager;
+  private agentManager: AgentManager;
 
-  constructor(apiKey: string = '', baseURL?: string) {
-    const url = baseURL || process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434';
+  constructor(apiKey?: string, baseURL?: string) {
+    // Use centralized config if not provided
+    const url = baseURL || config.getBaseURL();
+    const key = apiKey || config.getApiKey();
+    
     this.client = new OpenAI({ 
-      apiKey: apiKey || '',
+      apiKey: key,
       baseURL: url,
     });
-    this.orchestrator = new Orchestrator(apiKey, baseURL);
+    this.orchestrator = new Orchestrator(key, url);
+    
+    // Use default model from config
+    this.modelName = getDefaultModel();
     
     // Initialize token manager with 128k context window
     this.tokenManager = new TokenManager('gpt-3.5-turbo', 128000, 0.9);
@@ -29,6 +38,9 @@ export class AIAgent {
     
     // Initialize plugin manager
     this.pluginManager = new PluginManager();
+    
+    // Initialize agent manager
+    this.agentManager = new AgentManager();
   }
 
   async initialize(): Promise<void> {
@@ -36,6 +48,9 @@ export class AIAgent {
     
     // Initialize plugin manager and load plugins
     await this.pluginManager.initialize();
+    
+    // Initialize agent manager
+    await this.agentManager.initialize();
     
     // Register all plugin tools
     const plugins = this.pluginManager.getLoadedPlugins();
@@ -59,6 +74,10 @@ export class AIAgent {
   getPluginManager(): PluginManager {
     return this.pluginManager;
   }
+  
+  getAgentManager(): AgentManager {
+    return this.agentManager;
+  }
 
   getProjectContext(): ProjectContext | undefined {
     return this.projectContext;
@@ -70,6 +89,80 @@ export class AIAgent {
 
   getTokenManager(): TokenManager {
     return this.tokenManager;
+  }
+  
+  /**
+   * Create an OpenAI client with custom model configuration
+   * Used for executing agents with their own model settings
+   */
+  createClientForModel(modelConfig?: { apiKey?: string; baseURL?: string }): OpenAI {
+    if (!modelConfig?.apiKey && !modelConfig?.baseURL) {
+      return this.client; // Use default client
+    }
+    
+    const apiKey = modelConfig.apiKey || '';
+    const baseURL = modelConfig.baseURL || process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434';
+    
+    return new OpenAI({
+      apiKey,
+      baseURL,
+    });
+  }
+  
+  /**
+   * Get the model name to use for a request
+   * Can be overridden by agent-specific configuration
+   */
+  getModelName(overrideModel?: string): string {
+    return overrideModel || this.modelName;
+  }
+  
+  /**
+   * Get current model name
+   */
+  getCurrentModel(): string {
+    return this.modelName;
+  }
+  
+  /**
+   * Set the model to use for this agent
+   */
+  async setModel(modelName: string): Promise<void> {
+    this.modelName = modelName;
+    
+    // Update token manager with new model info
+    try {
+      const modelInfo = await this.tokenManager.fetchModelInfo(modelName);
+      if (modelInfo && modelInfo.contextWindow > 0) {
+        this.tokenManager.updateMaxTokens(modelInfo.contextWindow);
+      }
+    } catch (error) {
+      console.error('Could not fetch model info for', modelName);
+    }
+  }
+  
+  /**
+   * List available models from the API endpoint
+   */
+  async listAvailableModels(): Promise<Array<{ id: string; created?: number; owned_by?: string }>> {
+    try {
+      const response = await this.client.models.list();
+      return response.data.map(model => ({
+        id: model.id,
+        created: model.created,
+        owned_by: model.owned_by,
+      }));
+    } catch (error) {
+      console.error('Failed to list models:', error);
+      return [];
+    }
+  }
+  
+  /**
+   * Get the OpenAI client (for direct API access)
+   */
+  getClient(): OpenAI {
+    return this.client;
   }
 
   async chat(
@@ -287,7 +380,7 @@ export class AIAgent {
     };
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-large:fast',
+      model: 'nhn-small:fast',
       max_tokens: 2000,
       messages: [systemMessage, ...this.conversationHistory],
       stream: true,
@@ -367,7 +460,7 @@ Please provide a comprehensive response to the user based on these results.`;
     });
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-large:fast',
+      model: 'nhn-small:fast',
       max_tokens: 4096,
       messages: [systemMessage, ...this.conversationHistory],
       stream: true,

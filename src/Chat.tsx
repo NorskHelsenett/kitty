@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Box, Text, useInput, useApp, useStdout, Static } from 'ink';
-import TextInput from 'ink-text-input';
 import chalk from 'chalk';
 import { marked } from 'marked';
 import { markedTerminal } from 'marked-terminal';
 import type { AIAgent } from './agent.js';
 import type { ThinkingStep } from './orchestrator.js';
+import { SelectionMenu, SelectionItem } from './components/SelectionMenu.js';
+import { ConfirmationPrompt } from './components/ConfirmationPrompt.js';
+import { CommandInput } from './components/CommandInput.js';
+import { setConfirmationCallback } from './tools/executor.js';
 
 // Configure marked for terminal output
 marked.use(markedTerminal({
@@ -50,6 +53,20 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [catFrame, setCatFrame] = useState(0);
   const { exit } = useApp();
   const { stdout } = useStdout();
+  
+  // New state for UI modes
+  const [uiMode, setUiMode] = useState<'chat' | 'agent-selection' | 'plugin-selection' | 'model-selection' | 'confirmation'>('chat');
+  const [selectionItems, setSelectionItems] = useState<SelectionItem[]>([]);
+  const [confirmationData, setConfirmationData] = useState<{
+    title: string;
+    message: string;
+    details?: string;
+    onConfirm: () => void;
+    onReject: () => void;
+  } | null>(null);
+  
+  // Ref to store abort controller for cancelling requests
+  const abortControllerRef = useRef<AbortController | null>(null);
   
   // Use refs for throttling to reduce flickering
   const lastUpdateTimeRef = useRef<number>(0);
@@ -105,6 +122,28 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
       await agent.initialize();
       const context = agent.getProjectContext();
       
+      // Set up confirmation callback
+      setConfirmationCallback(async (toolName: string, input: any, details?: string) => {
+        return new Promise<boolean>((resolve) => {
+          setConfirmationData({
+            title: `Confirm ${toolName}`,
+            message: `Allow ${toolName} to execute?`,
+            details,
+            onConfirm: () => {
+              setConfirmationData(null);
+              setUiMode('chat');
+              resolve(true);
+            },
+            onReject: () => {
+              setConfirmationData(null);
+              setUiMode('chat');
+              resolve(false);
+            }
+          });
+          setUiMode('confirmation');
+        });
+      });
+      
       const welcomeMsg = 'Welcome to AI Chat Agent! 🤖\n\nI can help you with:\n• File operations (ls, cat, grep, find)\n• Git commands\n• Code analysis\n• And general questions!\n\nType your message and press Enter. Press Esc or Ctrl+C to exit.\nType /help for available commands.';
       
       if (context?.hasKittyMd) {
@@ -123,8 +162,25 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   }, []);
 
   useInput((input, key) => {
-    if (key.escape || (key.ctrl && input === 'c')) {
-      exit();
+    // Only handle global keys when in chat mode
+    if (uiMode === 'chat') {
+      if (key.escape) {
+        if (isProcessing) {
+          // Cancel ongoing request
+          if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+            abortControllerRef.current = null;
+          }
+          setIsProcessing(false);
+          setStatus('Cancelled');
+          addMessage('system', '⚠️  Request cancelled by user');
+        } else {
+          // Exit application
+          exit();
+        }
+      } else if (key.ctrl && input === 'c') {
+        exit();
+      }
     }
   });
 
@@ -184,6 +240,79 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
 
   const handleCommand = async (command: string): Promise<void> => {
     const cmd = command.toLowerCase().trim();
+
+    if (cmd === '/models') {
+      // Show model selection menu
+      addMessage('system', '🔍 Fetching available models from endpoint...');
+      
+      try {
+        const models = await agent.listAvailableModels();
+        
+        if (models.length === 0) {
+          addMessage('system', '⚠️  No models found. Check your API endpoint configuration.');
+          return;
+        }
+        
+        const currentModel = agent.getCurrentModel();
+        
+        const items: SelectionItem[] = models.map(m => ({
+          id: m.id,
+          name: m.id,
+          description: m.owned_by ? `Owner: ${m.owned_by}` : 'Available model',
+          enabled: m.id === currentModel
+        }));
+        
+        setSelectionItems(items);
+        setUiMode('model-selection');
+      } catch (error: any) {
+        addMessage('error', `Failed to fetch models: ${error.message}`);
+      }
+      return;
+    }
+
+    if (cmd === '/agents') {
+      // Show agent selection menu
+      const agentManager = agent.getAgentManager();
+      const installedAgents = await agentManager.listInstalled();
+      
+      const items: SelectionItem[] = installedAgents.map((a: any) => ({
+        id: a.name,
+        name: a.name,
+        description: a.description,
+        enabled: a.enabled
+      }));
+      
+      if (items.length === 0) {
+        addMessage('system', 'No agents installed. Install agents to use this feature.');
+        return;
+      }
+      
+      setSelectionItems(items);
+      setUiMode('agent-selection');
+      return;
+    }
+    
+    if (cmd === '/plugins') {
+      // Show plugin selection menu
+      const pluginManager = agent.getPluginManager();
+      const installedPlugins = await pluginManager.listInstalled();
+      
+      const items: SelectionItem[] = installedPlugins.map(p => ({
+        id: p.name,
+        name: p.name,
+        description: p.description,
+        enabled: p.enabled
+      }));
+      
+      if (items.length === 0) {
+        addMessage('system', 'No plugins installed. Install plugins to use this feature.');
+        return;
+      }
+      
+      setSelectionItems(items);
+      setUiMode('plugin-selection');
+      return;
+    }
 
     if (cmd === '/init' || cmd === '/reinit') {
       const { kittyMdExists } = await import('./project-context.js');
@@ -302,12 +431,18 @@ Important: Use the write_file tool to create KITTY.md with complete content, not
         setTokenSpeed(0);
       }
 
-    } else if (cmd === '/help') {
+        } else if (cmd === '/help') {
       addMessage('system', `Available Commands:
+- /models - Select which AI model to use
+- /agents - Select which agents to enable/disable
+- /plugins - Select which plugins to enable/disable
 - /init - Create a KITTY.md file for project context
 - /reinit - Regenerate KITTY.md (overwrites existing)
 - /help - Show this help message
 - /clear - Clear conversation history
+
+During agent execution:
+- Press ESC to cancel ongoing requests
 
 About KITTY.md:
 This file provides persistent project context to the AI agent.`);
@@ -529,6 +664,114 @@ This file provides persistent project context to the AI agent.`);
     );
   }
 
+  // Handle selection menus
+  if (uiMode === 'agent-selection') {
+    return (
+      <SelectionMenu
+        title="Select Agents to Enable"
+        items={selectionItems}
+        onSubmit={async (selectedIds: string[]) => {
+          const agentManager = agent.getAgentManager();
+          const allAgents = await agentManager.listInstalled();
+          
+          // Enable selected, disable unselected
+          for (const a of allAgents) {
+            if (selectedIds.includes(a.name) && !a.enabled) {
+              await agentManager.enable(a.name);
+              addMessage('system', `✅ Enabled agent: ${a.name}`);
+            } else if (!selectedIds.includes(a.name) && a.enabled) {
+              await agentManager.disable(a.name);
+              addMessage('system', `❌ Disabled agent: ${a.name}`);
+            }
+          }
+          
+          setUiMode('chat');
+        }}
+        onCancel={() => {
+          setUiMode('chat');
+          addMessage('system', 'Agent selection cancelled');
+        }}
+      />
+    );
+  }
+
+  if (uiMode === 'plugin-selection') {
+    return (
+      <SelectionMenu
+        title="Select Plugins to Enable"
+        items={selectionItems}
+        onSubmit={async (selectedIds: string[]) => {
+          const pluginManager = agent.getPluginManager();
+          const allPlugins = await pluginManager.listInstalled();
+          
+          // Enable selected, disable unselected
+          for (const p of allPlugins) {
+            if (selectedIds.includes(p.name) && !p.enabled) {
+              await pluginManager.enable(p.name);
+              addMessage('system', `✅ Enabled plugin: ${p.name}`);
+            } else if (!selectedIds.includes(p.name) && p.enabled) {
+              await pluginManager.disable(p.name);
+              addMessage('system', `❌ Disabled plugin: ${p.name}`);
+            }
+          }
+          
+          setUiMode('chat');
+        }}
+        onCancel={() => {
+          setUiMode('chat');
+          addMessage('system', 'Plugin selection cancelled');
+        }}
+      />
+    );
+  }
+
+  if (uiMode === 'model-selection') {
+    return (
+      <SelectionMenu
+        title="Select AI Model"
+        items={selectionItems}
+        singleSelect={true}
+        onSubmit={async (selectedIds: string[]) => {
+          if (selectedIds.length > 0) {
+            const selectedModel = selectedIds[0];
+            const currentModel = agent.getCurrentModel();
+            
+            if (selectedModel !== currentModel) {
+              addMessage('system', `🔄 Switching model from ${currentModel} to ${selectedModel}...`);
+              
+              try {
+                await agent.setModel(selectedModel);
+                addMessage('system', `✅ Model changed to ${selectedModel}`);
+              } catch (error: any) {
+                addMessage('error', `Failed to switch model: ${error.message}`);
+              }
+            } else {
+              addMessage('system', `Already using ${selectedModel}`);
+            }
+          }
+          
+          setUiMode('chat');
+        }}
+        onCancel={() => {
+          setUiMode('chat');
+          addMessage('system', 'Model selection cancelled');
+        }}
+      />
+    );
+  }
+
+  if (uiMode === 'confirmation' && confirmationData) {
+    return (
+      <ConfirmationPrompt
+        title={confirmationData.title}
+        message={confirmationData.message}
+        details={confirmationData.details}
+        onConfirm={confirmationData.onConfirm}
+        onReject={confirmationData.onReject}
+      />
+    );
+  }
+
   return (
     <Box flexDirection="column">
       {/* Messages area - use Static for completed messages to reduce re-renders */}
@@ -583,11 +826,10 @@ This file provides persistent project context to the AI agent.`);
       </Box>
 
       {/* Input box - always at bottom */}
-      <Box borderStyle="round" borderColor="green" paddingX={1} flexShrink={0}>
-        <Text bold color="greenBright">You: </Text>
-        <TextInput
-          value={input}
-          onChange={setInput}
+      <Box borderStyle="round" borderColor="green" paddingX={1} flexShrink={0} flexDirection="column">
+        <CommandInput
+          input={input}
+          onInputChange={setInput}
           onSubmit={handleSubmit}
           placeholder="Type your message..."
         />

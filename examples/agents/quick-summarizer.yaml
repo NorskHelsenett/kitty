@@ -1,0 +1,27 @@
+name: quick-summarizer
+version: 1.0.0
+description: Fast summarizer using a lightweight model for quick responses
+author: Kitty Team
+license: MIT
+
+# Model configuration - this agent uses a fast, lightweight model
+model:
+  name: nhn-small:fast  # Fast model for quick summaries
+  maxTokens: 1000       # Shorter responses
+  temperature: 0.7      # Higher temperature for more creative summaries
+
+tasks:
+  - name: read-readme
+    description: Read the project README
+    tool: read_file
+    input:
+      path: "README.md"
+    output: readme_content
+
+  - name: create-summary
+    description: Create a quick project summary
+    prompt: |
+      Create a brief 3-sentence summary of this project based on the README:
+      
+      ${readme_content}
+    output: summary

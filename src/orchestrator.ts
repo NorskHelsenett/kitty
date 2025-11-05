@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { config, getDefaultModel } from './config.js';
 
 export interface ThinkingStep {
   type: 'planning' | 'reflection' | 'decision';
@@ -25,13 +26,17 @@ export interface OrchestratorResult {
 
 export class Orchestrator {
   private client: OpenAI;
+  private modelName: string;
 
-  constructor(apiKey: string = '', baseURL?: string) {
-    const url = baseURL || process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434';
+  constructor(apiKey?: string, baseURL?: string) {
+    const url = baseURL || config.getBaseURL();
+    const key = apiKey || config.getApiKey();
+    
     this.client = new OpenAI({ 
-      apiKey: apiKey || '',
+      apiKey: key,
       baseURL: url,
     });
+    this.modelName = getDefaultModel();
   }
 
   /**
@@ -72,7 +77,7 @@ IMPORTANT: Consider whether the request can be better fulfilled by using the ava
 Respond with JSON only: { "shouldPlan": boolean, "reasoning": "brief explanation mentioning if/which tools would be useful" }`;
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-large:fast',
+      model: this.modelName,
       max_tokens: 500,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -212,7 +217,7 @@ Example for "explain this repo":
 }`;
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-large:fast',
+      model: 'nhn-small:fast',
       max_tokens: 2000,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -390,7 +395,7 @@ Analyze: Did we fulfill the user's request? Are there issues? Should we continue
     onThinking?.(thinkingStep);
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-large:fast',
+      model: 'nhn-small:fast',
       max_tokens: 4096, // Increased to allow for full file content in nextActions
       messages: [
         { role: 'system', content: systemPrompt },
@@ -448,7 +453,7 @@ Analyze: Did we fulfill the user's request? Are there issues? Should we continue
     ];
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-large:fast',
+      model: 'nhn-small:fast',
       max_tokens: 1000,
       messages,
       temperature: 0.7,

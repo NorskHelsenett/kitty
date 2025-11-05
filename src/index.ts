@@ -3,6 +3,7 @@ import { ChatUI } from './ui.js';
 import { AIAgent } from './agent.js';
 import { PluginManager } from './plugin-manager.js';
 import { AgentManager } from './agent-manager.js';
+import { config } from './config.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -84,10 +85,8 @@ function debugLog(data: any) {
 
 // Non-interactive mode: handle piped input or direct query
 async function runNonInteractive() {
-  const apiKey = process.env.OPENAI_API_KEY || '';
-  const baseURL = process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434';
-  
-  const agent = new AIAgent(apiKey, baseURL);
+  // Use centralized config
+  const agent = new AIAgent();
   await agent.initialize();
 
   // Get query from arguments (filter out flags)
@@ -344,20 +343,18 @@ async function main() {
   }
 
   // Interactive mode (original TUI)
-  // Check for API key (optional for local OpenAI-compatible servers)
-  const apiKey = process.env.OPENAI_API_KEY || '';
-  const baseURL = process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434';
-  
-  console.log(`Using OpenAI-compatible API at: ${baseURL}`);
+  // Configuration is now centralized in config.ts
+  console.log(`Using OpenAI-compatible API at: ${config.getBaseURL()}`);
   if (isDebugMode) {
     console.log(`Debug mode: ENABLED`);
+    console.log(`Default model: ${config.getDefaultModel()}`);
   }
-  if (!apiKey) {
+  if (!process.env.OPENAI_API_KEY) {
     console.log('Note: No OPENAI_API_KEY set, using empty key (suitable for local servers)');
   }
 
-  // Initialize agent and UI (Ink-based, no longer needs blessed screen)
-  const agent = new AIAgent(apiKey, baseURL);
+  // Initialize agent and UI using centralized config
+  const agent = new AIAgent();
   const ui = new ChatUI(null, agent, isDebugMode ? debugLog : undefined, isDebugMode);
 
   // Initialize and run the UI - this will block until the app exits

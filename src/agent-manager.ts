@@ -18,6 +18,17 @@ export interface AgentTask {
 }
 
 /**
+ * Agent Model Configuration
+ */
+export interface AgentModelConfig {
+  name: string; // e.g., "nhn-small:fast", "gpt-4", "claude-3-sonnet"
+  maxTokens?: number; // Override default max tokens for responses
+  temperature?: number; // Override temperature (0.0 - 2.0)
+  apiKey?: string; // Optional: agent-specific API key
+  baseURL?: string; // Optional: agent-specific endpoint
+}
+
+/**
  * Agent Workflow - A sequence of tasks
  */
 export interface AgentWorkflow {
@@ -26,6 +37,7 @@ export interface AgentWorkflow {
   version: string;
   author?: string;
   license?: string;
+  model?: AgentModelConfig; // Optional: specific model configuration for this agent
   tasks: AgentTask[];
   variables?: Record<string, any>; // Initial variables
 }
@@ -43,6 +55,7 @@ export interface AgentMetadata {
   enabled: boolean;
   source: string;
   tags?: string[]; // e.g., ["security", "sbom", "analysis"]
+  model?: AgentModelConfig; // Optional: specific model configuration
 }
 
 /**
@@ -321,7 +334,14 @@ export class AgentManager {
       }
 
       // Update metadata
-      await this.updateMetadata(workflow, filePath);
+      await this.saveMetadata(
+        workflow.name,
+        workflow.version,
+        workflow.description,
+        filePath,
+        workflow.author,
+        workflow.license
+      );
 
       this.agents.set(workflow.name, workflow);
       console.log(`✅ Agent ${workflow.name} installed successfully`);
@@ -330,7 +350,16 @@ export class AgentManager {
     }
   }
 
-  private async updateMetadata(workflow: AgentWorkflow, source: string): Promise<void> {
+  private async saveMetadata(
+    name: string, 
+    version: string, 
+    description: string, 
+    source: string,
+    author?: string,
+    license?: string,
+    installDate?: string,
+    enabled: boolean = true
+  ): Promise<void> {
     let allMetadata: Record<string, AgentMetadata> = {};
 
     try {
@@ -340,14 +369,14 @@ export class AgentManager {
       // File doesn't exist yet
     }
 
-    allMetadata[workflow.name] = {
-      name: workflow.name,
-      version: workflow.version,
-      description: workflow.description,
-      author: workflow.author,
-      license: workflow.license,
-      installDate: new Date().toISOString(),
-      enabled: true,
+    allMetadata[name] = {
+      name,
+      version,
+      description,
+      author,
+      license,
+      installDate: installDate || new Date().toISOString(),
+      enabled,
       source,
     };
 
@@ -364,11 +393,98 @@ export class AgentManager {
       version: agent.version,
     }));
   }
+  
+  /**
+   * List all installed agents with metadata
+   */
+  async listInstalled(): Promise<AgentMetadata[]> {
+    try {
+      const metadataContent = await fs.readFile(this.metadataFile, 'utf-8');
+      const allMetadata: Record<string, AgentMetadata> = JSON.parse(metadataContent);
+      return Object.values(allMetadata);
+    } catch (error) {
+      return [];
+    }
+  }
+  
+  /**
+   * Enable an agent
+   */
+  async enable(agentName: string): Promise<void> {
+    const metadata = await this.getMetadata(agentName);
+    if (!metadata) {
+      throw new Error(`Agent ${agentName} not found`);
+    }
+
+    metadata.enabled = true;
+    await this.saveMetadata(metadata.name, metadata.version, metadata.description, metadata.source, 
+      metadata.author, metadata.license, metadata.installDate, true);
+    await this.loadAgent(agentName);
+  }
+
+  /**
+   * Disable an agent
+   */
+  async disable(agentName: string): Promise<void> {
+    const metadata = await this.getMetadata(agentName);
+    if (!metadata) {
+      throw new Error(`Agent ${agentName} not found`);
+    }
+
+    metadata.enabled = false;
+    await this.saveMetadata(metadata.name, metadata.version, metadata.description, metadata.source,
+      metadata.author, metadata.license, metadata.installDate, false);
+    this.agents.delete(agentName);
+  }
+  
+  private async getMetadata(agentName: string): Promise<AgentMetadata | null> {
+    try {
+      const metadataContent = await fs.readFile(this.metadataFile, 'utf-8');
+      const allMetadata: Record<string, AgentMetadata> = JSON.parse(metadataContent);
+      return allMetadata[agentName] || null;
+    } catch (error) {
+      return null;
+    }
+  }
 
   /**
    * Get a specific agent workflow
    */
   getAgent(name: string): AgentWorkflow | undefined {
     return this.agents.get(name);
+  }
+  
+  /**
+   * Get the model configuration for a specific agent
+   */
+  getAgentModelConfig(agentName: string): AgentModelConfig | undefined {
+    const workflow = this.agents.get(agentName);
+    return workflow?.model;
+  }
+  
+  /**
+   * Update an agent's model configuration
+   */
+  async updateAgentModel(agentName: string, modelConfig: AgentModelConfig): Promise<void> {
+    const workflow = this.agents.get(agentName);
+    if (!workflow) {
+      throw new Error(`Agent ${agentName} not found`);
+    }
+    
+    workflow.model = modelConfig;
+    
+    // Save the updated workflow to disk
+    const agentPath = path.join(this.agentDir, agentName);
+    const files = await fs.readdir(agentPath);
+    const agentFile = files.find(f => f.startsWith('agent.'));
+    
+    if (agentFile) {
+      const filePath = path.join(agentPath, agentFile);
+      if (agentFile.endsWith('.json')) {
+        await fs.writeFile(filePath, JSON.stringify(workflow, null, 2), 'utf-8');
+      } else {
+        await fs.writeFile(filePath, yaml.dump(workflow), 'utf-8');
+      }
+    }
   }
 }

@@ -183,7 +183,7 @@ export class TokenManager {
 
     try {
       const summaryResponse = await client.chat.completions.create({
-        model: 'nhn-large:fast',
+        model: 'nhn-small:fast',
         messages: [
           {
             role: 'system',
