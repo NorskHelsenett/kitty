@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 export interface CommandSuggestion {
@@ -26,16 +26,6 @@ const AVAILABLE_COMMANDS: CommandSuggestion[] = [
 export function CommandInput({ input, onInputChange, onSubmit, placeholder }: CommandInputProps) {
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [showCursor, setShowCursor] = useState(true);
-
-  // Blinking cursor effect
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setShowCursor(prev => !prev);
-    }, 530); // Blink every 530ms
-
-    return () => clearInterval(interval);
-  }, []);
 
   // Get filtered suggestions based on current input
   const getSuggestions = (): CommandSuggestion[] => {
@@ -137,7 +127,7 @@ export function CommandInput({ input, onInputChange, onSubmit, placeholder }: Co
       <Box>
         <Text bold color="greenBright">❯ </Text>
         <Text>{input}</Text>
-        <Text color="greenBright">{showCursor ? '█' : ' '}</Text>
+        <Text color="greenBright">█</Text>
         {input.length === 0 && placeholder && (
           <Text dimColor>{placeholder}</Text>
         )}

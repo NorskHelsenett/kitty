@@ -69,7 +69,7 @@ code: |
     },
     {
       name: 'parse_html',
-      description: 'Extract text content and metadata from HTML. Simple parsing without external dependencies.',
+      description: 'Extract text content and metadata from HTML. You MUST specify what to extract using the extract parameter (text, title, links, or meta).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -80,7 +80,7 @@ code: |
           extract: {
             type: 'string',
             enum: ['text', 'title', 'links', 'meta'],
-            description: 'What to extract from the HTML'
+            description: 'What to extract from the HTML. Required. Use "text" to get readable content, "title" for page title, "links" for all URLs, or "meta" for metadata.'
           }
         },
         required: ['html', 'extract']
@@ -88,8 +88,14 @@ code: |
       execute: async (params) => {
         try {
           const html = params.html;
+          const extract = params.extract;
           
-          switch (params.extract) {
+          // Validate extract parameter
+          if (!extract || !['text', 'title', 'links', 'meta'].includes(extract)) {
+            return `Error: extract parameter is required and must be one of: text, title, links, meta. Received: ${extract}`;
+          }
+          
+          switch (extract) {
             case 'title':
               const titleMatch = html.match(/<title>(.*?)<\/title>/i);
               return titleMatch ? titleMatch[1] : 'No title found';

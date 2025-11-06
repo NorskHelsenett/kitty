@@ -8,6 +8,7 @@ import type { ThinkingStep } from './orchestrator.js';
 import { SelectionMenu, SelectionItem } from './components/SelectionMenu.js';
 import { ConfirmationPrompt } from './components/ConfirmationPrompt.js';
 import { CommandInput } from './components/CommandInput.js';
+import { TaskList, Task } from './components/TaskList.js';
 import { setConfirmationCallback } from './tools/executor.js';
 
 // Configure marked for terminal output
@@ -29,9 +30,19 @@ marked.use(markedTerminal({
   href: chalk.blue.underline,
 }) as any);
 
+interface AgentActivity {
+  agentName?: string;
+  pluginName?: string;
+  summary?: string;
+  planning?: string;
+  decision?: string;
+}
+
 interface Message {
-  role: 'user' | 'assistant' | 'system' | 'tool' | 'tool_result' | 'error' | 'thinking';
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'tool_result' | 'error' | 'thinking' | 'agent_activity';
   content: string;
+  agentActivity?: AgentActivity;
+  suppressOutput?: boolean; // For commands like /plugins
 }
 
 interface ChatProps {
@@ -51,6 +62,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [streamStartTime, setStreamStartTime] = useState<number>(0);
   const [streamTokenCount, setStreamTokenCount] = useState<number>(0);
   const [catFrame, setCatFrame] = useState(0);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const { exit } = useApp();
   const { stdout } = useStdout();
   
@@ -184,8 +196,22 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
     }
   });
 
-  const addMessage = useCallback((role: Message['role'], content: string) => {
-    setMessages(prev => [...prev, { role, content }]);
+  const addMessage = useCallback((role: Message['role'], content: string, agentActivity?: AgentActivity) => {
+    setMessages(prev => [...prev, { role, content, agentActivity }]);
+  }, []);
+
+  const addTask = useCallback((description: string): string => {
+    const id = `task-${Date.now()}-${Math.random()}`;
+    setTasks(prev => [...prev, { id, description, completed: false }]);
+    return id;
+  }, []);
+
+  const completeTask = useCallback((id: string) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: true } : t));
+  }, []);
+
+  const clearTasks = useCallback(() => {
+    setTasks([]);
   }, []);
 
   const updateLastMessage = useCallback((content: string) => {
@@ -194,8 +220,8 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
     // Store the pending update
     pendingUpdateRef.current = content;
     
-    // If enough time has passed, update immediately
-    if (now - lastUpdateTimeRef.current >= 100) {
+    // If enough time has passed, update immediately (250ms throttle to allow text selection)
+    if (now - lastUpdateTimeRef.current >= 250) {
       lastUpdateTimeRef.current = now;
       setMessages(prev => {
         if (prev.length === 0) return prev;
@@ -224,7 +250,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
           pendingUpdateRef.current = null;
         }
         updateTimeoutRef.current = null;
-      }, 100);
+      }, 250);
     }
   }, []);
 
@@ -478,6 +504,8 @@ This file provides persistent project context to the AI agent.`);
       let fullResponse = '';
       let toolCalls: any[] = [];
       let assistantMessageAdded = false;
+      let currentTaskId: string | null = null;
+      let currentAgentActivity: AgentActivity = {};
 
       await agent.chat(
         trimmed,
@@ -496,16 +524,35 @@ This file provides persistent project context to the AI agent.`);
         },
         (tool: any) => {
           toolCalls.push(tool);
-          if (debugMode) {
-            addMessage('tool', `� Using tool: ${tool.name}\n${JSON.stringify(tool.input, null, 2)}`);
+          
+          // Create a task for this tool usage
+          const taskDesc = `${tool.name}: ${tool.input?.path || tool.input?.command || tool.input?.query || tool.input?.url || 'executing'}`;
+          currentTaskId = addTask(taskDesc);
+          
+          // Only show agent activity in non-debug mode (debug mode shows detailed tool info)
+          if (!debugMode) {
+            currentAgentActivity.pluginName = tool.name;
+            currentAgentActivity.summary = `Using ${tool.name}`;
+            addMessage('agent_activity', '', currentAgentActivity);
+          } else {
+            // Debug mode: show detailed tool information
+            addMessage('tool', `🔧 Using tool: ${tool.name}\n${JSON.stringify(tool.input, null, 2)}`);
           }
+          
           setStatus(`tool: ${tool.name}`);
         },
         (result: any) => {
+          // Complete the current task
+          if (currentTaskId) {
+            completeTask(currentTaskId);
+            currentTaskId = null;
+          }
+          
           setStatus('Processing tool results...');
           
           if (!debugMode) return;
           
+          // Show tool results in debug mode
           try {
             const parsed = typeof result === 'string' ? JSON.parse(result) : result;
             if (parsed.markdown) {
@@ -517,9 +564,10 @@ This file provides persistent project context to the AI agent.`);
               addMessage('tool_result', `✅ Tool result:\n${preview}`);
             }
           } catch (e) {
+            // If parsing failed, show raw result
             const preview = typeof result === 'string' 
               ? result.slice(0, 200) + (result.length > 200 ? '...' : '')
-              : JSON.stringify(result, null, 2);
+              : String(result).slice(0, 200);
             addMessage('tool_result', `✅ Tool result:\n${preview}`);
           }
         },
@@ -527,6 +575,26 @@ This file provides persistent project context to the AI agent.`);
           setStatus('Waiting for AI to analyze results...');
         },
         (step: ThinkingStep) => {
+          // Update agent activity based on thinking step
+          if (step.type === 'planning') {
+            currentAgentActivity.planning = step.content;
+            if (!debugMode) {
+              // In non-debug mode, only show meaningful planning steps
+              if (!step.content.includes('Analyzing if this request') && 
+                  !step.content.includes('Creating a task plan')) {
+                addMessage('agent_activity', '', { ...currentAgentActivity });
+              }
+            }
+          } else if (step.type === 'decision') {
+            currentAgentActivity.decision = step.content;
+            if (!debugMode) {
+              // Only show final decisions, not intermediate ones
+              if (step.content.includes('complete') || step.content.includes('fulfilled')) {
+                addMessage('agent_activity', '', { ...currentAgentActivity });
+              }
+            }
+          }
+          
           if (debugMode) {
             const emoji = step.type === 'planning' ? '🤔' : step.type === 'reflection' ? '🔍' : '💡';
             addMessage('thinking', `${emoji} ${step.type.toUpperCase()}: ${step.content}`);
@@ -537,6 +605,11 @@ This file provides persistent project context to the AI agent.`);
 
       if (!fullResponse && toolCalls.length > 0) {
         addMessage('assistant', '✓ Task completed using tools.');
+      }
+      
+      // Clear tasks after completion
+      if (tasks.length > 0) {
+        setTimeout(() => clearTasks(), 2000);
       }
 
     } catch (error: any) {
@@ -550,7 +623,17 @@ This file provides persistent project context to the AI agent.`);
   };
 
   // Format messages - only show last 20
-  const formattedMessages = messages.slice(-20).map((msg) => {
+  // Filter out system messages and verbose messages unless in debug mode
+  // Also filter out user messages that are commands (start with '/') unless in debug mode
+  const filteredMessages = debugMode
+    ? messages
+    : messages.filter(msg => {
+        if (msg.role === 'system' || msg.role === 'tool' || msg.role === 'tool_result') return false;
+        if (msg.role === 'user' && msg.content.trim().startsWith('/')) return false;
+        return true;
+      });
+  
+  const formattedMessages = filteredMessages.slice(-20).map((msg) => {
     if (msg.role === 'assistant') {
       try {
         return { ...msg, formatted: marked(msg.content) as string };
@@ -566,6 +649,7 @@ This file provides persistent project context to the AI agent.`);
   const tokenManager = agent.getTokenManager();
   const usageText = tokenManager.formatUsage(usage);
   const usageColor = tokenManager.getUsageColor(usage);
+  const currentModel = agent.getCurrentModel();
   
   let tokenIcon = '●';
   if (usage.percentageUsed >= 90) {
@@ -639,6 +723,7 @@ This file provides persistent project context to the AI agent.`);
       case 'tool': return 'blue';
       case 'tool_result': return 'green';
       case 'thinking': return 'gray';
+      case 'agent_activity': return 'blue';
       case 'error': return 'red';
       default: return 'white';
     }
@@ -650,8 +735,35 @@ This file provides persistent project context to the AI agent.`);
       case 'assistant': return 'AI: ';
       case 'system': return 'System: ';
       case 'error': return 'Error: ';
+      case 'agent_activity': return ''; // No prefix for agent activity
       default: return '';
     }
+  };
+
+  const renderAgentActivity = (activity: AgentActivity) => {
+    const parts: string[] = [];
+    
+    if (activity.agentName) {
+      parts.push(`Agent: ${activity.agentName}`);
+    }
+    
+    if (activity.pluginName) {
+      parts.push(`  Plugin: ${activity.pluginName}`);
+    }
+    
+    if (activity.summary) {
+      parts.push(`    Summary: ${activity.summary}`);
+    }
+    
+    if (activity.planning) {
+      parts.push(`  Planning: ${activity.planning}`);
+    }
+    
+    if (activity.decision) {
+      parts.push(`  Decision: ${activity.decision}`);
+    }
+    
+    return parts.join('\n');
   };
 
   const terminalHeight = stdout?.rows || 24;
@@ -689,7 +801,6 @@ This file provides persistent project context to the AI agent.`);
         }}
         onCancel={() => {
           setUiMode('chat');
-          addMessage('system', 'Agent selection cancelled');
         }}
       />
     );
@@ -719,7 +830,6 @@ This file provides persistent project context to the AI agent.`);
         }}
         onCancel={() => {
           setUiMode('chat');
-          addMessage('system', 'Plugin selection cancelled');
         }}
       />
     );
@@ -754,7 +864,6 @@ This file provides persistent project context to the AI agent.`);
         }}
         onCancel={() => {
           setUiMode('chat');
-          addMessage('system', 'Model selection cancelled');
         }}
       />
     );
@@ -780,14 +889,22 @@ This file provides persistent project context to the AI agent.`);
           <Static items={formattedMessages.slice(0, -1)}>
             {(msg, idx) => (
               <Box key={idx} flexDirection="column" marginBottom={1}>
-                {getMessagePrefix(msg.role) && (
-                  <Text bold color={getMessageColor(msg.role)}>
-                    {getMessagePrefix(msg.role)}
+                {msg.role === 'agent_activity' && msg.agentActivity ? (
+                  <Text color="blue" dimColor>
+                    {renderAgentActivity(msg.agentActivity)}
                   </Text>
+                ) : (
+                  <>
+                    {getMessagePrefix(msg.role) && (
+                      <Text bold color={getMessageColor(msg.role)}>
+                        {getMessagePrefix(msg.role)}
+                      </Text>
+                    )}
+                    <Text color={getMessageColor(msg.role)}>
+                      {msg.formatted}
+                    </Text>
+                  </>
                 )}
-                <Text color={getMessageColor(msg.role)}>
-                  {msg.formatted}
-                </Text>
               </Box>
             )}
           </Static>
@@ -796,17 +913,31 @@ This file provides persistent project context to the AI agent.`);
         {/* Render the last (potentially streaming) message separately */}
         {formattedMessages.length > 0 && (
           <Box flexDirection="column" marginBottom={1}>
-            {getMessagePrefix(formattedMessages[formattedMessages.length - 1].role) && (
-              <Text bold color={getMessageColor(formattedMessages[formattedMessages.length - 1].role)}>
-                {getMessagePrefix(formattedMessages[formattedMessages.length - 1].role)}
+            {formattedMessages[formattedMessages.length - 1].role === 'agent_activity' && 
+             formattedMessages[formattedMessages.length - 1].agentActivity ? (
+              <Text color="blue" dimColor>
+                {renderAgentActivity(formattedMessages[formattedMessages.length - 1].agentActivity!)}
               </Text>
+            ) : (
+              <>
+                {getMessagePrefix(formattedMessages[formattedMessages.length - 1].role) && (
+                  <Text bold color={getMessageColor(formattedMessages[formattedMessages.length - 1].role)}>
+                    {getMessagePrefix(formattedMessages[formattedMessages.length - 1].role)}
+                  </Text>
+                )}
+                <Text color={getMessageColor(formattedMessages[formattedMessages.length - 1].role)}>
+                  {formattedMessages[formattedMessages.length - 1].formatted}
+                </Text>
+              </>
             )}
-            <Text color={getMessageColor(formattedMessages[formattedMessages.length - 1].role)}>
-              {formattedMessages[formattedMessages.length - 1].formatted}
-            </Text>
           </Box>
         )}
       </Box>
+
+      {/* Task list - floats above input */}
+      {tasks.length > 0 && (
+        <TaskList tasks={tasks} />
+      )}
 
       {/* Status bar */}
       <Box borderStyle="round" borderColor="cyan" paddingX={1} flexShrink={0}>
@@ -816,12 +947,15 @@ This file provides persistent project context to the AI agent.`);
       </Box>
 
       {/* Token usage bar */}
-      <Box paddingX={1} flexShrink={0}>
+      <Box paddingX={1} flexShrink={0} justifyContent="space-between">
         <Text color={usageColor as any}>
           {tokenIcon} Tokens: {usageText}
           {(tokenSpeed > 0 || lastTokenSpeed > 0) && (
             <Text color="cyan"> • {(tokenSpeed > 0 ? tokenSpeed : lastTokenSpeed).toFixed(1)} tok/s</Text>
           )}
+        </Text>
+        <Text color="cyan" dimColor>
+          {currentModel}
         </Text>
       </Box>
 

@@ -454,15 +454,20 @@ ${JSON.stringify(taskSummary, null, 2)}
 
 Please provide a comprehensive response to the user based on these results.`;
 
-    this.conversationHistory.push({
-      role: 'assistant',
-      content: promptMessage,
-    });
+    // Add task results as a temporary context message (will be included in API call but not stored in history)
+    const messagesWithTaskContext = [
+      systemMessage,
+      ...this.conversationHistory,
+      {
+        role: 'user' as const,
+        content: promptMessage,
+      }
+    ];
 
     const response = await this.client.chat.completions.create({
       model: 'nhn-small:fast',
       max_tokens: 4096,
-      messages: [systemMessage, ...this.conversationHistory],
+      messages: messagesWithTaskContext,
       stream: true,
     });
 
@@ -476,10 +481,12 @@ Please provide a comprehensive response to the user based on these results.`;
       }
     }
 
-    this.conversationHistory[this.conversationHistory.length - 1] = {
+    // Add ONLY the assistant response to history (not the task summary prompt)
+    // The original user message is already in the history from the beginning of chat()
+    this.conversationHistory.push({
       role: 'assistant',
       content: fullResponse,
-    };
+    });
   }
 
   clearHistory() {
