@@ -52,7 +52,9 @@ export class Orchestrator {
   }> {
     const toolsList = availableTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
 
-    const systemPrompt = `You are an AI task analyzer. Your job is to determine if a user's request requires complex task planning or can be answered directly.
+    const systemPrompt = `
+Reasoning: high
+You are an AI task analyzer. Your job is to determine if a user's request requires complex task planning or can be answered directly.
 
 Available tools that can help with complex tasks:
 ${toolsList}
