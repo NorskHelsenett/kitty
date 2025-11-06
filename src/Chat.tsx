@@ -50,6 +50,8 @@ interface ChatProps {
   debugMode?: boolean;
 }
 
+type FormattedMessage = Message & { formatted: string };
+
 export function Chat({ agent, debugMode = false }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -628,12 +630,14 @@ This file provides persistent project context to the AI agent.`);
   const filteredMessages = debugMode
     ? messages
     : messages.filter(msg => {
-        if (msg.role === 'system' || msg.role === 'tool' || msg.role === 'tool_result') return false;
+        if (msg.role === 'system' || msg.role === 'tool' || msg.role === 'tool_result' || msg.role === 'agent_activity') {
+          return false;
+        }
         if (msg.role === 'user' && msg.content.trim().startsWith('/')) return false;
         return true;
       });
   
-  const formattedMessages = filteredMessages.slice(-20).map((msg) => {
+  const formattedMessages: FormattedMessage[] = filteredMessages.slice(-20).map((msg) => {
     if (msg.role === 'assistant') {
       try {
         return { ...msg, formatted: marked(msg.content) as string };
@@ -768,6 +772,71 @@ This file provides persistent project context to the AI agent.`);
 
   const terminalHeight = stdout?.rows || 24;
 
+  const renderDebugMessage = (msg: FormattedMessage) => {
+    if (msg.role === 'agent_activity' && msg.agentActivity) {
+      return (
+        <Text color="blue" dimColor>
+          {renderAgentActivity(msg.agentActivity)}
+        </Text>
+      );
+    }
+
+    const prefix = getMessagePrefix(msg.role);
+    const color = getMessageColor(msg.role);
+
+    return (
+      <>
+        {prefix && (
+          <Text bold color={color}>
+            {prefix}
+          </Text>
+        )}
+        <Text color={color}>
+          {msg.formatted}
+        </Text>
+      </>
+    );
+  };
+
+  const renderCompactMessage = (msg: FormattedMessage) => {
+    const color = getMessageColor(msg.role);
+    const prefix = getMessagePrefix(msg.role);
+    const lines = String(msg.formatted).split('\n');
+    const [firstLine, ...rest] = lines;
+    const indentWidth = 2 + (prefix ? prefix.length : 0);
+
+    if (!firstLine && rest.length === 0) {
+      return null;
+    }
+
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row" alignItems="flex-start">
+          <Text color={color}>{'• '}</Text>
+          {prefix && (
+            <Text bold color={color}>
+              {prefix}
+            </Text>
+          )}
+          <Text color={color}>
+            {firstLine}
+          </Text>
+        </Box>
+        {rest.map((line, idx) => (
+          <Box key={idx} flexDirection="row" marginLeft={indentWidth}>
+            <Text color={color}>
+              {line}
+            </Text>
+          </Box>
+        ))}
+      </Box>
+    );
+  };
+
+  const renderMessageBody = (msg: FormattedMessage) => (
+    debugMode ? renderDebugMessage(msg) : renderCompactMessage(msg)
+  );
+
   if (!initialized) {
     return (
       <Box padding={1}>
@@ -889,22 +958,7 @@ This file provides persistent project context to the AI agent.`);
           <Static items={formattedMessages.slice(0, -1)}>
             {(msg, idx) => (
               <Box key={idx} flexDirection="column" marginBottom={1}>
-                {msg.role === 'agent_activity' && msg.agentActivity ? (
-                  <Text color="blue" dimColor>
-                    {renderAgentActivity(msg.agentActivity)}
-                  </Text>
-                ) : (
-                  <>
-                    {getMessagePrefix(msg.role) && (
-                      <Text bold color={getMessageColor(msg.role)}>
-                        {getMessagePrefix(msg.role)}
-                      </Text>
-                    )}
-                    <Text color={getMessageColor(msg.role)}>
-                      {msg.formatted}
-                    </Text>
-                  </>
-                )}
+                {renderMessageBody(msg)}
               </Box>
             )}
           </Static>
@@ -913,29 +967,13 @@ This file provides persistent project context to the AI agent.`);
         {/* Render the last (potentially streaming) message separately */}
         {formattedMessages.length > 0 && (
           <Box flexDirection="column" marginBottom={1}>
-            {formattedMessages[formattedMessages.length - 1].role === 'agent_activity' && 
-             formattedMessages[formattedMessages.length - 1].agentActivity ? (
-              <Text color="blue" dimColor>
-                {renderAgentActivity(formattedMessages[formattedMessages.length - 1].agentActivity!)}
-              </Text>
-            ) : (
-              <>
-                {getMessagePrefix(formattedMessages[formattedMessages.length - 1].role) && (
-                  <Text bold color={getMessageColor(formattedMessages[formattedMessages.length - 1].role)}>
-                    {getMessagePrefix(formattedMessages[formattedMessages.length - 1].role)}
-                  </Text>
-                )}
-                <Text color={getMessageColor(formattedMessages[formattedMessages.length - 1].role)}>
-                  {formattedMessages[formattedMessages.length - 1].formatted}
-                </Text>
-              </>
-            )}
+            {renderMessageBody(formattedMessages[formattedMessages.length - 1])}
           </Box>
         )}
       </Box>
 
       {/* Task list - floats above input */}
-      {tasks.length > 0 && (
+      {debugMode && tasks.length > 0 && (
         <TaskList tasks={tasks} />
       )}
 
