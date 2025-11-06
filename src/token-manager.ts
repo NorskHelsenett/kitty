@@ -50,14 +50,14 @@ export class TokenManager {
     try {
       const models = await this.client.models.list();
       const model = models.data.find(m => m.id === modelId);
-      
+
       if (model) {
         // Try to get context window from model object if available
         // For OpenAI-compatible APIs, this might vary
-        const contextWindow = (model as any).context_length || 
-                             (model as any).max_context_length ||
-                             this.maxTokens;
-        
+        const contextWindow = (model as any).context_length ||
+          (model as any).max_context_length ||
+          this.maxTokens;
+
         return {
           id: model.id,
           contextWindow,
@@ -82,15 +82,15 @@ export class TokenManager {
    */
   countMessageTokens(message: OpenAI.Chat.Completions.ChatCompletionMessageParam): number {
     let tokens = 0;
-    
+
     // Base tokens for message structure
     tokens += 4; // Every message follows <|start|>{role/name}\n{content}<|end|>\n
-    
+
     // Count role
     if (message.role) {
       tokens += this.encoder.encode(message.role).length;
     }
-    
+
     // Count content
     if (typeof message.content === 'string') {
       tokens += this.encoder.encode(message.content).length;
@@ -102,7 +102,7 @@ export class TokenManager {
         }
       }
     }
-    
+
     // Count tool calls if present
     if ('tool_calls' in message && message.tool_calls) {
       for (const toolCall of message.tool_calls) {
@@ -113,12 +113,12 @@ export class TokenManager {
         }
       }
     }
-    
+
     // Count tool call id if present
     if ('tool_call_id' in message && message.tool_call_id) {
       tokens += this.encoder.encode(message.tool_call_id).length;
     }
-    
+
     return tokens;
   }
 
@@ -127,17 +127,17 @@ export class TokenManager {
    */
   countConversationTokens(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): number {
     let total = 0;
-    
+
     for (const message of messages) {
       total += this.countMessageTokens(message);
     }
-    
+
     // Add base tokens for completion only if there are messages
     // Every reply is primed with <|start|>assistant<|message|>
     if (messages.length > 0) {
       total += 3;
     }
-    
+
     return total;
   }
 
@@ -148,7 +148,7 @@ export class TokenManager {
     const currentTokens = this.countConversationTokens(messages);
     const percentageUsed = (currentTokens / this.maxTokens) * 100;
     const shouldSummarize = percentageUsed >= (this.summarizationThreshold * 100);
-    
+
     return {
       currentTokens,
       maxTokens: this.maxTokens,
@@ -183,7 +183,7 @@ export class TokenManager {
 
     try {
       const summaryResponse = await client.chat.completions.create({
-        model: 'nhn-small:fast',
+        model: 'nhn-large:fast',
         messages: [
           {
             role: 'system',
@@ -221,7 +221,7 @@ export class TokenManager {
     const percentage = usage.percentageUsed.toFixed(1);
     const current = usage.currentTokens.toLocaleString();
     const max = usage.maxTokens.toLocaleString();
-    
+
     return `${current} / ${max} tokens (${percentage}%)`;
   }
 

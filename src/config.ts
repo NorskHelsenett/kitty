@@ -20,8 +20,8 @@ export interface APIConfig {
  * Available models configuration
  */
 export const AVAILABLE_MODELS: Record<string, ModelConfig> = {
-  'nhn-small:fast': {
-    name: 'nhn-small:fast',
+  'nhn-large:fast': {
+    name: 'nhn-large:fast',
     displayName: 'NHN Small (Fast)',
     description: 'Fast, lightweight model for quick tasks',
     contextWindow: 32000,
@@ -75,7 +75,7 @@ class ConfigManager {
     this.config = {
       baseURL: process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434',
       apiKey: process.env.OPENAI_API_KEY || '',
-      defaultModel: process.env.DEFAULT_MODEL || 'nhn-small:fast',
+      defaultModel: process.env.DEFAULT_MODEL || 'nhn-large:fast',
     };
   }
 

@@ -21,7 +21,7 @@ export interface AgentTask {
  * Agent Model Configuration
  */
 export interface AgentModelConfig {
-  name: string; // e.g., "nhn-small:fast", "gpt-4", "claude-3-sonnet"
+  name: string; // e.g., "nhn-large:fast", "gpt-4", "claude-3-sonnet"
   maxTokens?: number; // Override default max tokens for responses
   temperature?: number; // Override temperature (0.0 - 2.0)
   apiKey?: string; // Optional: agent-specific API key
@@ -84,7 +84,7 @@ export class AgentManager {
   async initialize(): Promise<void> {
     // Create agent directory if it doesn't exist
     await fs.mkdir(this.agentDir, { recursive: true });
-    
+
     // Load existing agents
     await this.loadAllAgents();
   }
@@ -129,10 +129,10 @@ export class AgentManager {
 
   private async loadAgent(agentName: string): Promise<void> {
     const agentPath = path.join(this.agentDir, agentName);
-    
+
     // Try to find agent file (support both JSON and YAML)
     let agentFilePath: string | null = null;
-    
+
     for (const ext of ['agent.json', 'agent.yaml', 'agent.yml']) {
       const testPath = path.join(agentPath, ext);
       try {
@@ -143,7 +143,7 @@ export class AgentManager {
         // File doesn't exist, try next
       }
     }
-    
+
     if (!agentFilePath) {
       throw new Error(`No agent file found (tried agent.json, agent.yaml, agent.yml)`);
     }
@@ -152,7 +152,7 @@ export class AgentManager {
       // Read and parse agent workflow
       const content = await fs.readFile(agentFilePath, 'utf-8');
       let workflow: AgentWorkflow;
-      
+
       if (agentFilePath.endsWith('.json')) {
         workflow = JSON.parse(content);
       } else {
@@ -170,7 +170,7 @@ export class AgentManager {
    * Execute an agent workflow
    */
   async executeAgent(
-    agentName: string, 
+    agentName: string,
     initialInput?: Record<string, any>,
     aiExecutor?: (prompt: string, context: AgentContext) => Promise<string>
   ): Promise<AgentContext> {
@@ -200,7 +200,7 @@ export class AgentManager {
         }
 
         console.log(`▶️  Executing task: ${task.name}`);
-        
+
         let result: any;
 
         // Execute based on task type
@@ -229,13 +229,13 @@ export class AgentManager {
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         console.error(`❌ Error in task ${task.name}: ${errorMsg}`);
-        
+
         context.errors.push({
           task: task.name,
           error: errorMsg,
           timestamp: Date.now(),
         });
-        
+
         // Stop execution on error (could make this configurable)
         throw new Error(`Agent execution failed at task: ${task.name}`);
       }
@@ -283,18 +283,18 @@ export class AgentManager {
     // Simple condition evaluation (could be enhanced)
     // Format: "variable_name exists" or "variable_name equals value"
     const parts = condition.split(' ');
-    
+
     if (parts.length >= 2) {
       const varName = parts[0];
       const operator = parts[1];
-      
+
       if (operator === 'exists') {
         return varName in context.variables && context.variables[varName] !== undefined;
       } else if (operator === 'equals' && parts.length >= 3) {
         return context.variables[varName] === parts.slice(2).join(' ');
       }
     }
-    
+
     return true; // Default to true if can't parse
   }
 
@@ -351,9 +351,9 @@ export class AgentManager {
   }
 
   private async saveMetadata(
-    name: string, 
-    version: string, 
-    description: string, 
+    name: string,
+    version: string,
+    description: string,
     source: string,
     author?: string,
     license?: string,
@@ -393,7 +393,7 @@ export class AgentManager {
       version: agent.version,
     }));
   }
-  
+
   /**
    * List all installed agents with metadata
    */
@@ -406,7 +406,7 @@ export class AgentManager {
       return [];
     }
   }
-  
+
   /**
    * Enable an agent
    */
@@ -417,7 +417,7 @@ export class AgentManager {
     }
 
     metadata.enabled = true;
-    await this.saveMetadata(metadata.name, metadata.version, metadata.description, metadata.source, 
+    await this.saveMetadata(metadata.name, metadata.version, metadata.description, metadata.source,
       metadata.author, metadata.license, metadata.installDate, true);
     await this.loadAgent(agentName);
   }
@@ -436,7 +436,7 @@ export class AgentManager {
       metadata.author, metadata.license, metadata.installDate, false);
     this.agents.delete(agentName);
   }
-  
+
   private async getMetadata(agentName: string): Promise<AgentMetadata | null> {
     try {
       const metadataContent = await fs.readFile(this.metadataFile, 'utf-8');
@@ -453,7 +453,7 @@ export class AgentManager {
   getAgent(name: string): AgentWorkflow | undefined {
     return this.agents.get(name);
   }
-  
+
   /**
    * Get the model configuration for a specific agent
    */
@@ -461,7 +461,7 @@ export class AgentManager {
     const workflow = this.agents.get(agentName);
     return workflow?.model;
   }
-  
+
   /**
    * Update an agent's model configuration
    */
@@ -470,14 +470,14 @@ export class AgentManager {
     if (!workflow) {
       throw new Error(`Agent ${agentName} not found`);
     }
-    
+
     workflow.model = modelConfig;
-    
+
     // Save the updated workflow to disk
     const agentPath = path.join(this.agentDir, agentName);
     const files = await fs.readdir(agentPath);
     const agentFile = files.find(f => f.startsWith('agent.'));
-    
+
     if (agentFile) {
       const filePath = path.join(agentPath, agentFile);
       if (agentFile.endsWith('.json')) {

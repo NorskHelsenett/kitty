@@ -6,7 +6,7 @@ license: MIT
 
 # Model configuration - this agent uses a fast, lightweight model
 model:
-  name: nhn-small:fast  # Fast model for quick summaries
+  name: nhn-large:fast  # Fast model for quick summaries
   maxTokens: 1000       # Shorter responses
   temperature: 0.7      # Higher temperature for more creative summaries
 

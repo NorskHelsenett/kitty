@@ -31,8 +31,8 @@ export class Orchestrator {
   constructor(apiKey?: string, baseURL?: string) {
     const url = baseURL || config.getBaseURL();
     const key = apiKey || config.getApiKey();
-    
-    this.client = new OpenAI({ 
+
+    this.client = new OpenAI({
       apiKey: key,
       baseURL: url,
     });
@@ -43,7 +43,7 @@ export class Orchestrator {
    * Analyzes a user query to determine if task planning is needed
    */
   async shouldCreatePlan(
-    userMessage: string, 
+    userMessage: string,
     availableTools: Array<{ name: string; description: string }>,
     conversationContext?: string[]
   ): Promise<{
@@ -51,7 +51,7 @@ export class Orchestrator {
     reasoning: string;
   }> {
     const toolsList = availableTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
-    
+
     const systemPrompt = `You are an AI task analyzer. Your job is to determine if a user's request requires complex task planning or can be answered directly.
 
 Available tools that can help with complex tasks:
@@ -99,12 +99,12 @@ Respond with JSON only: { "shouldPlan": boolean, "reasoning": "brief explanation
    * Creates a task plan for complex requests
    */
   async createPlan(
-    userMessage: string, 
+    userMessage: string,
     availableTools: Array<{ name: string; description: string }>,
     conversationContext?: string[]
   ): Promise<{ thinking: string; tasks: Task[] }> {
     const toolsList = availableTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
-    
+
     const systemPrompt = `You are an AI task planner. Break down the user's request into concrete, sequential tasks.
 
 Available tools (USE THESE when possible):
@@ -217,7 +217,7 @@ Example for "explain this repo":
 }`;
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-small:fast',
+      model: 'nhn-large:fast',
       max_tokens: 2000,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -229,7 +229,7 @@ Example for "explain this repo":
     try {
       const content = response.choices[0]?.message?.content || '{"thinking": "", "tasks": []}';
       const parsed = JSON.parse(content);
-      
+
       // Mark all tasks as not completed
       const tasks = parsed.tasks.map((t: any) => ({
         ...t,
@@ -266,7 +266,7 @@ Example for "explain this repo":
   }> {
     const completedTasks = tasks.filter(t => t.completed);
     const failedTasks = tasks.filter(t => t.completed && t.successful === false);
-    
+
     const taskSummary = completedTasks.map(t => {
       let resultPreview = 'No result';
       if (t.result !== undefined && t.result !== null) {
@@ -295,7 +295,7 @@ Example for "explain this repo":
           }
         }
       }
-      
+
       return {
         description: t.description,
         successful: t.successful,
@@ -395,7 +395,7 @@ Analyze: Did we fulfill the user's request? Are there issues? Should we continue
     onThinking?.(thinkingStep);
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-small:fast',
+      model: 'nhn-large:fast',
       max_tokens: 4096, // Increased to allow for full file content in nextActions
       messages: [
         { role: 'system', content: systemPrompt },
@@ -407,7 +407,7 @@ Analyze: Did we fulfill the user's request? Are there issues? Should we continue
     try {
       const content = response.choices[0]?.message?.content || '{"isComplete": true, "reasoning": "unknown"}';
       const parsed = JSON.parse(content);
-      
+
       const reflectionResult: ThinkingStep = {
         type: 'decision',
         content: parsed.reasoning,
@@ -453,7 +453,7 @@ Analyze: Did we fulfill the user's request? Are there issues? Should we continue
     ];
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-small:fast',
+      model: 'nhn-large:fast',
       max_tokens: 1000,
       messages,
       temperature: 0.7,

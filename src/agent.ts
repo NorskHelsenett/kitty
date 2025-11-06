@@ -22,36 +22,36 @@ export class AIAgent {
     // Use centralized config if not provided
     const url = baseURL || config.getBaseURL();
     const key = apiKey || config.getApiKey();
-    
-    this.client = new OpenAI({ 
+
+    this.client = new OpenAI({
       apiKey: key,
       baseURL: url,
     });
     this.orchestrator = new Orchestrator(key, url);
-    
+
     // Use default model from config
     this.modelName = getDefaultModel();
-    
+
     // Initialize token manager with 128k context window
     this.tokenManager = new TokenManager('gpt-3.5-turbo', 128000, 0.9);
     this.tokenManager.setOpenAIClient(this.client);
-    
+
     // Initialize plugin manager
     this.pluginManager = new PluginManager();
-    
+
     // Initialize agent manager
     this.agentManager = new AgentManager();
   }
 
   async initialize(): Promise<void> {
     this.projectContext = await loadProjectContext();
-    
+
     // Initialize plugin manager and load plugins
     await this.pluginManager.initialize();
-    
+
     // Initialize agent manager
     await this.agentManager.initialize();
-    
+
     // Register all plugin tools
     const plugins = this.pluginManager.getLoadedPlugins();
     for (const plugin of plugins) {
@@ -59,7 +59,7 @@ export class AIAgent {
         registerCustomTool(tool);
       }
     }
-    
+
     // Try to fetch actual model info to get correct context window
     try {
       const modelInfo = await this.tokenManager.fetchModelInfo(this.modelName);
@@ -70,11 +70,11 @@ export class AIAgent {
       console.error('Could not fetch model info, using default 128k context window');
     }
   }
-  
+
   getPluginManager(): PluginManager {
     return this.pluginManager;
   }
-  
+
   getAgentManager(): AgentManager {
     return this.agentManager;
   }
@@ -90,7 +90,7 @@ export class AIAgent {
   getTokenManager(): TokenManager {
     return this.tokenManager;
   }
-  
+
   /**
    * Create an OpenAI client with custom model configuration
    * Used for executing agents with their own model settings
@@ -99,16 +99,16 @@ export class AIAgent {
     if (!modelConfig?.apiKey && !modelConfig?.baseURL) {
       return this.client; // Use default client
     }
-    
+
     const apiKey = modelConfig.apiKey || '';
     const baseURL = modelConfig.baseURL || process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434';
-    
+
     return new OpenAI({
       apiKey,
       baseURL,
     });
   }
-  
+
   /**
    * Get the model name to use for a request
    * Can be overridden by agent-specific configuration
@@ -116,20 +116,20 @@ export class AIAgent {
   getModelName(overrideModel?: string): string {
     return overrideModel || this.modelName;
   }
-  
+
   /**
    * Get current model name
    */
   getCurrentModel(): string {
     return this.modelName;
   }
-  
+
   /**
    * Set the model to use for this agent
    */
   async setModel(modelName: string): Promise<void> {
     this.modelName = modelName;
-    
+
     // Update token manager with new model info
     try {
       const modelInfo = await this.tokenManager.fetchModelInfo(modelName);
@@ -140,7 +140,7 @@ export class AIAgent {
       console.error('Could not fetch model info for', modelName);
     }
   }
-  
+
   /**
    * List available models from the API endpoint
    */
@@ -157,7 +157,7 @@ export class AIAgent {
       return [];
     }
   }
-  
+
   /**
    * Get the OpenAI client (for direct API access)
    */
@@ -175,7 +175,7 @@ export class AIAgent {
   ): Promise<void> {
     // Check token usage before adding new message
     const usage = this.tokenManager.getUsage(this.conversationHistory);
-    
+
     if (usage.shouldSummarize) {
       // Notify user about summarization
       onThinking?.({
@@ -183,14 +183,14 @@ export class AIAgent {
         content: `Context window at ${usage.percentageUsed.toFixed(1)}% - Summarizing conversation history to free up space...`,
         timestamp: new Date(),
       });
-      
+
       // Summarize the conversation
       this.conversationHistory = await this.tokenManager.summarizeConversation(
         this.conversationHistory,
         this.client,
         10 // Keep last 10 messages
       );
-      
+
       const newUsage = this.tokenManager.getUsage(this.conversationHistory);
       onThinking?.({
         type: 'planning',
@@ -198,7 +198,7 @@ export class AIAgent {
         timestamp: new Date(),
       });
     }
-    
+
     this.conversationHistory.push({
       role: 'user',
       content: userMessage,
@@ -259,11 +259,11 @@ export class AIAgent {
       iteration++;
 
       const tasksToProcess = allTasks.filter(t => !t.completed);
-      
+
       for (const task of tasksToProcess) {
         if (task.toolName) {
           onToolUse?.({ name: task.toolName, input: task.toolInput });
-          
+
           try {
             const result = await executeTool(task.toolName, task.toolInput);
             task.result = result;
@@ -282,10 +282,10 @@ export class AIAgent {
                 successful: undefined,
                 result: undefined,
               };
-              
+
               // Add verification task immediately after this one
               allTasks.push(verifyTask);
-              
+
               // Execute verification immediately
               onToolUse?.({ name: verifyTask.toolName!, input: verifyTask.toolInput });
               try {
@@ -370,7 +370,7 @@ export class AIAgent {
     onTextChunk?: (text: string) => void
   ): Promise<void> {
     const baseSystemMessage = 'You are a helpful AI assistant. Format responses using Markdown. Keep responses concise and clear.';
-    const systemContent = this.projectContext 
+    const systemContent = this.projectContext
       ? buildSystemMessageWithContext(this.projectContext, baseSystemMessage)
       : baseSystemMessage;
 
@@ -380,7 +380,7 @@ export class AIAgent {
     };
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-small:fast',
+      model: 'nhn-large:fast',
       max_tokens: 2000,
       messages: [systemMessage, ...this.conversationHistory],
       stream: true,
@@ -389,7 +389,7 @@ export class AIAgent {
     let fullResponse = '';
     for await (const chunk of response) {
       const delta = chunk.choices[0]?.delta;
-      
+
       if (delta?.content) {
         fullResponse += delta.content;
         onTextChunk?.(delta.content);
@@ -420,7 +420,7 @@ export class AIAgent {
           }
         }
       }
-      
+
       return {
         description: t.description,
         successful: t.successful,
@@ -438,7 +438,7 @@ IMPORTANT:
 - Just confirm what was created, e.g., "I've created KITTY.md with project documentation including overview, commands, and coding rules."
 - Focus on what was accomplished, not reproducing file contents`;
 
-    const systemContent = this.projectContext 
+    const systemContent = this.projectContext
       ? buildSystemMessageWithContext(this.projectContext, baseSystemMessage)
       : baseSystemMessage;
 
@@ -465,7 +465,7 @@ Please provide a comprehensive response to the user based on these results.`;
     ];
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-small:fast',
+      model: 'nhn-large:fast',
       max_tokens: 4096,
       messages: messagesWithTaskContext,
       stream: true,
@@ -474,7 +474,7 @@ Please provide a comprehensive response to the user based on these results.`;
     let fullResponse = '';
     for await (const chunk of response) {
       const delta = chunk.choices[0]?.delta;
-      
+
       if (delta?.content) {
         fullResponse += delta.content;
         onTextChunk?.(delta.content);
