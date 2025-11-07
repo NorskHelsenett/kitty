@@ -14,42 +14,39 @@ variables:
   output_format: "markdown"
 
 tasks:
-  - name: scan_purls
-    description: Scan the SBOM file for PURLs without loading the entire file into the model
-    tool: scan_sbom_purls
+  - name: find_github_packages
+    description: Grep the SBOM file for GitHub packages only
+    tool: execute_command
     input:
-      file_path: "${sbom_file}"
-      unique_only: true
-      include_metadata: true
-    output: packages_list
+      command: grep -o 'pkg:golang/github.com/[^"]*' "${sbom_file}" | head -5
+    output: github_purls_raw
 
-  - name: parse_sbom_metadata
-    description: Parse the SBOM for component metadata such as licenses
-    tool: parse_sbom
-    input:
-      file_path: "${sbom_file}"
-      format: auto
-    output: sbom_metadata
-
-  - name: analyze_first_package
-    description: Analyze the first package and extract GitHub repo info
-    condition: packages_list exists
+  - name: extract_first_github_package
+    description: Parse the first GitHub PURL and extract owner/repo info
     prompt: |
-      The SBOM scan produced the following package list (JSON):
-      ${packages_list}
+      Extract the first GitHub package URL from this command output:
 
-      1. Select the first meaningful GitHub package (e.g., pkg:golang/github.com/...)
-      2. Extract the GitHub owner and repo name from the PURL
-         Example: pkg:golang/github.com/gin-gonic/gin@v1.11.0 → owner: gin-gonic, repo: gin
-      3. Return JSON with keys: owner, repoURL, purl, name, version
-         Example:
-         {
-           "owner": "gin-gonic",
-           "repoURL": "https://github.com/gin-gonic/gin",
-           "purl": "pkg:golang/github.com/gin-gonic/gin@v1.11.0",
-           "name": "gin",
-           "version": "v1.11.0"
-         }
+      ${github_purls_raw}
+
+      If the command succeeded, you'll see stdout with PURLs.
+      If it failed, check stderr.
+
+      Parse the FIRST GitHub PURL to extract repository information.
+
+      For example, from "pkg:golang/github.com/gin-gonic/gin@v1.11.0":
+      - owner: gin-gonic
+      - repo: gin
+      - github_url: https://github.com/gin-gonic/gin
+
+      Return ONLY a JSON object (no markdown, no code blocks):
+      {
+        "owner": "username",
+        "repo": "reponame",
+        "github_url": "https://github.com/username/reponame",
+        "purl": "full purl string",
+        "name": "package-name",
+        "version": "version"
+      }
     output: package_info
 
   - name: get_github_repo_info
@@ -73,19 +70,19 @@ tasks:
   - name: generate_report
     description: Generate final security and maintenance report
     prompt: |
-      Generate a comprehensive report for the analyzed package(s):
+      Generate a comprehensive report for the analyzed package:
 
-      Package Scan Results: ${packages_list}
-      Detailed Component Metadata: ${sbom_metadata}
       Selected Package: ${package_info}
       Repository Details: ${repo_details}
       Maintenance Status: ${maintenance_status}
 
       Format the report as ${output_format} with:
       - Executive Summary
-      - Package Details (name, version, license, stars, forks)
-      - Repository Status (archived, last commit, activity level)
-      - Security Concerns (if any)
-      - Maintenance Status Assessment
-      - Recommendations
+      - Package Details (name, version, GitHub URL)
+      - Repository Statistics (stars, forks, license, open issues)
+      - Maintenance Status (last commit, activity level, archived status)
+      - Security Assessment
+      - Recommendations for usage
+
+      Keep it concise and actionable.
     output: final_report

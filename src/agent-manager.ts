@@ -218,6 +218,9 @@ export class AgentManager {
           // Execute AI prompt - resolve template variables first
           const resolvedPrompt = this.resolvePrompt(task.prompt, context);
           result = await aiExecutor(resolvedPrompt, context);
+
+          // Try to parse JSON responses (strip markdown code blocks if present)
+          result = this.parseAIResponse(result);
         } else {
           throw new Error(`Task ${task.name} has neither tool nor prompt specified`);
         }
@@ -275,10 +278,12 @@ export class AgentManager {
     const resolved: Record<string, any> = {};
 
     for (const [key, value] of Object.entries(params)) {
-      if (typeof value === 'string' && value.startsWith('${') && value.endsWith('}')) {
-        // Variable reference
-        const varName = value.slice(2, -1);
-        resolved[key] = context.variables[varName];
+      if (typeof value === 'string') {
+        // Use the same logic as resolvePrompt to handle embedded variables
+        resolved[key] = this.resolveVariablesInString(value, context);
+      } else if (typeof value === 'object' && value !== null) {
+        // Recursively resolve nested objects
+        resolved[key] = this.resolveParameters(value, context);
       } else {
         resolved[key] = value;
       }
@@ -287,8 +292,31 @@ export class AgentManager {
     return resolved;
   }
 
+  private resolveVariablesInString(str: string, context: AgentContext): string {
+    // Replace all ${variable} or ${variable.property} references
+    return str.replace(/\$\{([^}]+)\}/g, (match, varName) => {
+      const trimmedVarName = varName.trim();
+
+      // Support nested property access like ${package_info.repo}
+      const parts = trimmedVarName.split('.');
+      let value: any = context.variables[parts[0]];
+
+      // Walk down the property chain
+      for (let i = 1; i < parts.length && value !== undefined; i++) {
+        value = value[parts[i]];
+      }
+
+      if (value === undefined) {
+        return match; // Keep original if variable not found
+      }
+
+      return String(value);
+    });
+  }
+
   private resolvePrompt(prompt: string, context: AgentContext): string {
     // Replace all ${variable} references in the prompt with their actual values
+    // For prompts, we want to pretty-print objects as JSON
     return prompt.replace(/\$\{([^}]+)\}/g, (match, varName) => {
       const trimmedVarName = varName.trim();
 
@@ -305,12 +333,38 @@ export class AgentManager {
         return match; // Keep original if variable not found
       }
 
-      // Convert objects/arrays to JSON string for better readability
+      // Convert objects/arrays to JSON string for better readability in prompts
       if (typeof value === 'object' && value !== null) {
         return JSON.stringify(value, null, 2);
       }
       return String(value);
     });
+  }
+
+  private parseAIResponse(response: string): any {
+    // If response is not a string, return as-is
+    if (typeof response !== 'string') {
+      return response;
+    }
+
+    // Try to strip markdown code blocks and parse JSON
+    const codeBlockMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    if (codeBlockMatch) {
+      try {
+        return JSON.parse(codeBlockMatch[1].trim());
+      } catch (e) {
+        // If parsing fails, return the extracted content
+        return codeBlockMatch[1].trim();
+      }
+    }
+
+    // Try to parse as plain JSON
+    try {
+      return JSON.parse(response.trim());
+    } catch (e) {
+      // Not JSON, return as string
+      return response;
+    }
   }
 
   private evaluateCondition(condition: string, context: AgentContext): boolean {
