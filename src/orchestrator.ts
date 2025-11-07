@@ -107,7 +107,9 @@ Respond with JSON only: { "shouldPlan": boolean, "reasoning": "brief explanation
   ): Promise<{ thinking: string; tasks: Task[] }> {
     const toolsList = availableTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
 
-    const systemPrompt = `You are an AI task planner. Break down the user's request into concrete, sequential tasks.
+    const systemPrompt = `
+Reasoning: high
+You are an AI task planner. Break down the user's request into concrete, sequential tasks.
 
 Available tools (USE THESE when possible):
 ${toolsList}
@@ -307,7 +309,9 @@ Example for "explain this repo":
 
     const toolsList = availableTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
 
-    const systemPrompt = `You are an AI task evaluator. Analyze whether tasks successfully fulfilled the user's request.
+    const systemPrompt = `
+    Reasoning: high
+    You are an AI task evaluator. Analyze whether tasks successfully fulfilled the user's request.
 
 Available tools for corrective actions:
 ${toolsList}
