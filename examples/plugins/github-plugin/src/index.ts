@@ -158,8 +158,11 @@ const checkRepoMaintenance: Tool = {
       const repo: any = await repoResponse.json();
       const commits: any[] = await commitsResponse.json();
 
-      const lastCommitDate = commits[0]?.commit?.author?.date;
-      const monthsSinceLastCommit = lastCommitDate 
+      const lastCommit = commits[0];
+      const lastCommitDate = lastCommit?.commit?.author?.date;
+      const lastCommitSha = lastCommit?.sha;
+      const lastCommitMessage = lastCommit?.commit?.message?.split('\n')[0];
+      const monthsSinceLastCommit = lastCommitDate
         ? (Date.now() - new Date(lastCommitDate).getTime()) / (1000 * 60 * 60 * 24 * 30)
         : Infinity;
 
@@ -182,10 +185,13 @@ const checkRepoMaintenance: Tool = {
         archived: isArchived,
         disabled: isDisabled,
         last_commit_date: lastCommitDate,
+        last_commit_sha: lastCommitSha,
+        last_commit_sha_short: lastCommitSha?.substring(0, 7),
+        last_commit_message: lastCommitMessage,
         months_since_last_commit: Math.round(monthsSinceLastCommit * 10) / 10,
         open_issues: repo.open_issues_count,
-        recommendation: status === 'maintained' 
-          ? 'Repository appears actively maintained' 
+        recommendation: status === 'maintained'
+          ? 'Repository appears actively maintained'
           : status === 'archived'
           ? 'Repository is archived and no longer maintained'
           : 'Repository may not be actively maintained - use with caution'

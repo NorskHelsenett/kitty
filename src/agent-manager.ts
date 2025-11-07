@@ -293,17 +293,44 @@ export class AgentManager {
   }
 
   private resolveVariablesInString(str: string, context: AgentContext): string {
-    // Replace all ${variable} or ${variable.property} references
+    // Replace all ${variable}, ${variable.property}, or ${array[index].property} references
     return str.replace(/\$\{([^}]+)\}/g, (match, varName) => {
       const trimmedVarName = varName.trim();
 
-      // Support nested property access like ${package_info.repo}
-      const parts = trimmedVarName.split('.');
-      let value: any = context.variables[parts[0]];
+      // Check if it contains array indexing
+      const arrayMatch = trimmedVarName.match(/^([^\[]+)\[(\d+)\](.*)$/);
 
-      // Walk down the property chain
-      for (let i = 1; i < parts.length && value !== undefined; i++) {
-        value = value[parts[i]];
+      let value: any;
+
+      if (arrayMatch) {
+        // Handle array indexing: variable[index].property
+        const [, baseName, indexStr, restPath] = arrayMatch;
+        const index = parseInt(indexStr, 10);
+        value = context.variables[baseName];
+
+        if (Array.isArray(value) && index >= 0 && index < value.length) {
+          value = value[index];
+
+          // Handle remaining property chain after array index
+          if (restPath) {
+            const props = restPath.split('.').filter(p => p);
+            for (const prop of props) {
+              if (value === undefined) break;
+              value = value[prop];
+            }
+          }
+        } else {
+          return match; // Array or index not valid
+        }
+      } else {
+        // Handle normal property access: variable.property
+        const parts = trimmedVarName.split('.');
+        value = context.variables[parts[0]];
+
+        // Walk down the property chain
+        for (let i = 1; i < parts.length && value !== undefined; i++) {
+          value = value[parts[i]];
+        }
       }
 
       if (value === undefined) {

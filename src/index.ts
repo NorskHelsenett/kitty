@@ -251,14 +251,16 @@ async function runPluginCommand() {
           process.exit(1);
         }
 
+        const isForce = args.includes('--force');
+
         console.log(`Installing plugin from: ${source}`);
-        
+
         if (source.startsWith('http://') || source.startsWith('https://')) {
-          await pluginManager.installFromURL(source);
+          await pluginManager.installFromURL(source, isForce);
         } else {
-          await pluginManager.installFromFile(source);
+          await pluginManager.installFromFile(source, isForce);
         }
-        
+
         console.log('Plugin installed successfully!');
         break;
       }

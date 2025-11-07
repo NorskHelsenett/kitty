@@ -147,7 +147,7 @@ export class PluginManager {
     );
   }
 
-  async installFromURL(url: string): Promise<void> {
+  async installFromURL(url: string, force: boolean = false): Promise<void> {
     try {
       // Download the plugin file
       const response = await fetch(url);
@@ -156,14 +156,14 @@ export class PluginManager {
       }
 
       const content = await response.text();
-      
+
       // Try to parse as JSON to see if it's a manifest or direct plugin
       let manifest: PluginManifest;
       let pluginCode: string;
-      
+
       try {
         const json = JSON.parse(content);
-        
+
         // Check if it's a manifest with embedded code
         if (json.manifest && json.code) {
           manifest = json.manifest;
@@ -189,13 +189,13 @@ export class PluginManager {
         pluginCode = content;
       }
 
-      await this.installPlugin(manifest, pluginCode, url);
+      await this.installPlugin(manifest, pluginCode, url, force);
     } catch (error) {
       throw new Error(`Failed to install plugin from URL: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  async installFromFile(filePath: string): Promise<void> {
+  async installFromFile(filePath: string, force: boolean = false): Promise<void> {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       
@@ -252,19 +252,24 @@ export class PluginManager {
         throw new Error('No plugin code found');
       }
 
-      await this.installPlugin(manifest, pluginCode, filePath);
+      await this.installPlugin(manifest, pluginCode, filePath, force);
     } catch (error) {
       throw new Error(`Failed to install plugin from file: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  private async installPlugin(manifest: PluginManifest, code: string, source: string): Promise<void> {
+  private async installPlugin(manifest: PluginManifest, code: string, source: string, force: boolean = false): Promise<void> {
     const pluginPath = path.join(this.pluginDir, manifest.name);
 
     // Check if plugin already exists
     const exists = await fs.access(pluginPath).then(() => true).catch(() => false);
     if (exists) {
-      throw new Error(`Plugin ${manifest.name} already exists. Uninstall it first.`);
+      if (force) {
+        console.log(`Plugin ${manifest.name} already exists. Force flag detected, reinstalling...`);
+        await this.uninstall(manifest.name);
+      } else {
+        throw new Error(`Plugin ${manifest.name} already exists. Uninstall it first.`);
+      }
     }
 
     // Create plugin directory
