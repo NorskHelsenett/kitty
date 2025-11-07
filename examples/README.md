@@ -101,7 +101,18 @@ This demonstrates:
 ```bash
 # Using the sbom-analyzer agent
 kitty agent run sbom-analyzer --input '{"sbom_file": "examples/sample-sbom.json"}'
+
+# Quickly list unique PURLs without loading the SBOM into the model
+kitty agent run sbom-analyzer --input examples/sample-sbom.json
 ```
+
+You can also call the `scan_sbom_purls` tool directly in a chat:
+
+```
+> use scan_sbom_purls file_path=examples/sample-sbom.json
+```
+
+See `docs/PURL_TYPES.md` for the non-HTTP schemes (`pkg:npm/...`, `pkg:maven/...`, etc.) that the scanner looks for.
 
 ### Installing Example Plugins
 

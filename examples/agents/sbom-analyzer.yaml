@@ -14,81 +14,78 @@ variables:
   output_format: "markdown"
 
 tasks:
-  - name: read_sbom
-    description: Read and parse the SBOM file
-    tool: read_file
+  - name: scan_purls
+    description: Scan the SBOM file for PURLs without loading the entire file into the model
+    tool: scan_sbom_purls
     input:
-      path: "${sbom_file}"
-    output: sbom_content
-
-  - name: extract_packages
-    description: Extract package information and PURLs from SBOM
-    prompt: |
-      Analyze the following SBOM content and extract all package URLs (PURLs).
-      For each package, extract:
-      - Package URL (PURL)
-      - Package name
-      - Version
-      - Ecosystem/type (npm, go, nuget, pypi, etc.)
-      
-      SBOM Content:
-      ${sbom_content}
-      
-      Return the results as a JSON array with objects containing: purl, name, version, ecosystem
+      file_path: "${sbom_file}"
+      unique_only: true
+      include_metadata: true
     output: packages_list
 
+  - name: parse_sbom_metadata
+    description: Parse the SBOM for component metadata such as licenses
+    tool: parse_sbom
+    input:
+      file_path: "${sbom_file}"
+      format: auto
+    output: sbom_metadata
+
   - name: analyze_first_package
-    description: Analyze the first package in detail
+    description: Analyze the first package and extract GitHub repo info
     condition: packages_list exists
     prompt: |
-      For this package, extract the following information from the PURL:
+      The SBOM scan produced the following package list (JSON):
       ${packages_list}
-      
-      Extract:
-      1. Git repository URL (if available in the PURL or need to look it up)
-      2. License information
-      3. Latest version available
-      
-      Return as JSON with keys: repo_url, license, latest_version
+
+      1. Select the first meaningful GitHub package (e.g., pkg:golang/github.com/...)
+      2. Extract the GitHub owner and repo name from the PURL
+         Example: pkg:golang/github.com/gin-gonic/gin@v1.11.0 → owner: gin-gonic, repo: gin
+      3. Return JSON with keys: owner, repoURL, purl, name, version
+         Example:
+         {
+           "owner": "gin-gonic",
+           "repoURL": "https://github.com/gin-gonic/gin",
+           "purl": "pkg:golang/github.com/gin-gonic/gin@v1.11.0",
+           "name": "gin",
+           "version": "v1.11.0"
+         }
     output: package_info
 
-  - name: check_repo_status
-    description: Check if the repository is maintained
+  - name: get_github_repo_info
+    description: Fetch GitHub repository information
     condition: package_info exists
-    tool: execute_command
+    tool: github_repo_info
     input:
-      command: git ls-remote ${package_info.repo_url} HEAD
-    output: repo_check
+      owner: "${package_info.owner}"
+      repo: "${package_info.repo}"
+    output: repo_details
 
-  - name: analyze_commit_history
-    description: Clone repo and analyze recent commits to determine maintenance status
-    condition: repo_check exists
-    prompt: |
-      Based on the git repository information, determine if this repository is actively maintained.
-      
-      Repository: ${package_info.repo_url}
-      
-      Criteria for "unmaintained":
-      - No commits in the last 12 months
-      - Open issues with no response
-      - Deprecated or archived status
-      
-      Analyze and return: maintained (boolean), last_activity (date), status (active/stale/unmaintained)
+  - name: check_maintenance_status
+    description: Check if the GitHub repository is actively maintained
+    condition: repo_details exists
+    tool: github_check_maintenance
+    input:
+      owner: "${package_info.owner}"
+      repo: "${package_info.repo}"
     output: maintenance_status
 
   - name: generate_report
     description: Generate final security and maintenance report
     prompt: |
       Generate a comprehensive report for the analyzed package(s):
-      
-      Package Information: ${packages_list}
-      Repository: ${package_info}
+
+      Package Scan Results: ${packages_list}
+      Detailed Component Metadata: ${sbom_metadata}
+      Selected Package: ${package_info}
+      Repository Details: ${repo_details}
       Maintenance Status: ${maintenance_status}
-      
+
       Format the report as ${output_format} with:
       - Executive Summary
-      - Package Details
-      - Security Concerns
-      - Maintenance Status
+      - Package Details (name, version, license, stars, forks)
+      - Repository Status (archived, last commit, activity level)
+      - Security Concerns (if any)
+      - Maintenance Status Assessment
       - Recommendations
     output: final_report

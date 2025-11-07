@@ -105,6 +105,13 @@ export class AgentManager {
     }
   }
 
+  /**
+   * Get a loaded agent workflow by name
+   */
+  getAgentWorkflow(agentName: string): AgentWorkflow | undefined {
+    return this.agents.get(agentName);
+  }
+
   private async loadAllAgents(): Promise<void> {
     try {
       const metadataContent = await fs.readFile(this.metadataFile, 'utf-8');
@@ -208,8 +215,9 @@ export class AgentManager {
           // Execute a specific tool
           result = await this.executeTool(task, context);
         } else if (task.prompt && aiExecutor) {
-          // Execute AI prompt
-          result = await aiExecutor(task.prompt, context);
+          // Execute AI prompt - resolve template variables first
+          const resolvedPrompt = this.resolvePrompt(task.prompt, context);
+          result = await aiExecutor(resolvedPrompt, context);
         } else {
           throw new Error(`Task ${task.name} has neither tool nor prompt specified`);
         }
@@ -277,6 +285,32 @@ export class AgentManager {
     }
 
     return resolved;
+  }
+
+  private resolvePrompt(prompt: string, context: AgentContext): string {
+    // Replace all ${variable} references in the prompt with their actual values
+    return prompt.replace(/\$\{([^}]+)\}/g, (match, varName) => {
+      const trimmedVarName = varName.trim();
+
+      // Support nested property access like ${package_info.repo_url}
+      const parts = trimmedVarName.split('.');
+      let value: any = context.variables[parts[0]];
+
+      // Walk down the property chain
+      for (let i = 1; i < parts.length && value !== undefined; i++) {
+        value = value[parts[i]];
+      }
+
+      if (value === undefined) {
+        return match; // Keep original if variable not found
+      }
+
+      // Convert objects/arrays to JSON string for better readability
+      if (typeof value === 'object' && value !== null) {
+        return JSON.stringify(value, null, 2);
+      }
+      return String(value);
+    });
   }
 
   private evaluateCondition(condition: string, context: AgentContext): boolean {

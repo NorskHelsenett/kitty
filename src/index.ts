@@ -2,10 +2,14 @@
 import { ChatUI } from './ui.js';
 import { AIAgent } from './agent.js';
 import { PluginManager } from './plugin-manager.js';
-import { AgentManager } from './agent-manager.js';
+import { AgentManager, type AgentWorkflow } from './agent-manager.js';
+import type { Tool } from './plugins.js';
 import { config } from './config.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { executeTool as runExecutorTool } from './tools/executor.js';
+import { builtInTools } from './tools/index.js';
+import { tools as sbomTools } from './tools/sbom-tools.js';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -80,6 +84,108 @@ function debugLog(data: any) {
     const timestamp = new Date().toISOString();
     const logEntry = `[${timestamp}] ${JSON.stringify(data, null, 2)}\n`;
     fs.appendFileSync(debugFile, logEntry);
+  }
+}
+
+function inferFileVariableName(workflow?: AgentWorkflow | null): string | null {
+  if (!workflow?.variables) {
+    return null;
+  }
+
+  const entries = Object.entries(workflow.variables)
+    .filter(([, value]) => typeof value === 'string');
+
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const fileLike = entries.find(([name]) => {
+    const lowered = name.toLowerCase();
+    return lowered.includes('file') || lowered.includes('path');
+  });
+
+  if (fileLike) {
+    return fileLike[0];
+  }
+
+  if (entries.length === 1) {
+    return entries[0][0];
+  }
+
+  return null;
+}
+
+function buildInputDataFromArgument(rawInput: string, workflow?: AgentWorkflow): Record<string, any> {
+  const trimmed = rawInput.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  // Try JSON first
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // Continue to other heuristics
+  }
+
+  // Support simple key=value pairs
+  const equalsIndex = trimmed.indexOf('=');
+  if (equalsIndex > 0) {
+    const key = trimmed.slice(0, equalsIndex).trim();
+    const value = trimmed.slice(equalsIndex + 1).trim();
+
+    if (!key) {
+      throw new Error('Error: Invalid --input format. Provide JSON, key=value, or a file path.');
+    }
+
+    return { [key]: value };
+  }
+
+  // Treat as file path if it exists
+  const resolvedPath = path.resolve(process.cwd(), trimmed);
+  if (fs.existsSync(resolvedPath)) {
+    const stats = fs.statSync(resolvedPath);
+    if (stats.isFile()) {
+      const variableName = inferFileVariableName(workflow);
+      if (!variableName) {
+        throw new Error('Error: Unable to infer which variable should receive the file path. Use JSON (e.g., {"sbom_file":"path"}) or key=value format.');
+      }
+      return { [variableName]: resolvedPath };
+    }
+  }
+
+  throw new Error('Error: Invalid --input value. Provide JSON, key=value, or a valid file path.');
+}
+
+function normalizeExecutorResult(output: string): string {
+  try {
+    const parsed = JSON.parse(output);
+    if (parsed.error) return parsed.error;
+    if (parsed.raw) return parsed.raw;
+    if (parsed.markdown) return parsed.markdown;
+    return output;
+  } catch {
+    return output;
+  }
+}
+
+function registerAgentTools(agentManager: AgentManager, pluginManager: PluginManager) {
+  const executorTools: Tool[] = builtInTools.map(tool => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.input_schema || {},
+    execute: async (params: any) => normalizeExecutorResult(await runExecutorTool(tool.name, params)),
+  }));
+
+  agentManager.registerTools(executorTools);
+
+  if (sbomTools.length > 0) {
+    agentManager.registerTools(sbomTools);
+  }
+
+  const pluginTools = pluginManager.getAllTools();
+  if (pluginTools.length > 0) {
+    agentManager.registerTools(pluginTools);
   }
 }
 
@@ -229,6 +335,9 @@ async function runAgentCommand() {
   const command = args[1];
   const agentManager = new AgentManager();
   await agentManager.initialize();
+  const pluginManager = new PluginManager();
+  await pluginManager.initialize();
+  registerAgentTools(agentManager, pluginManager);
 
   try {
     switch (command) {
@@ -268,38 +377,80 @@ async function runAgentCommand() {
           process.exit(1);
         }
 
+        const workflow = agentManager.getAgentWorkflow(agentName);
+        if (!workflow) {
+          console.error(`Error: Agent "${agentName}" is not installed or enabled. Run "kitty agent list" to see available agents.`);
+          process.exit(1);
+        }
+
         // Parse --input flag if provided
         const inputIndex = args.indexOf('--input');
         let inputData = {};
         if (inputIndex !== -1 && args[inputIndex + 1]) {
           try {
-            inputData = JSON.parse(args[inputIndex + 1]);
+            inputData = buildInputDataFromArgument(args[inputIndex + 1], workflow);
           } catch (error) {
-            console.error('Error: Invalid JSON for --input parameter');
+            console.error(error instanceof Error ? error.message : 'Error parsing --input parameter');
             process.exit(1);
           }
         }
 
         console.log(`Running agent: ${agentName}`);
-        
-        // Simple AI executor for prompts (could be enhanced)
+
+        // Create AI agent for executing prompts
+        const agent = new AIAgent();
+        await agent.initialize();
+
+        // AI executor that actually calls the AI model
         const aiExecutor = async (prompt: string) => {
           console.log(`\n🤖 AI Prompt:\n${prompt}\n`);
-          return "AI response placeholder"; // TODO: integrate with AIAgent
+
+          // Use the OpenAI client directly for simple completions
+          const client = agent.getClient();
+          const modelName = workflow.model?.name || agent.getCurrentModel();
+
+          try {
+            const response = await client.chat.completions.create({
+              model: modelName,
+              max_tokens: workflow.model?.maxTokens || 2000,
+              temperature: workflow.model?.temperature || 0.7,
+              messages: [
+                {
+                  role: 'system',
+                  content: 'You are a helpful AI assistant. Analyze the provided data and respond with the requested information in the specified format.'
+                },
+                {
+                  role: 'user',
+                  content: prompt
+                }
+              ],
+            });
+
+            const result = response.choices[0]?.message?.content || '';
+            console.log(`\n📝 AI Response:\n${result}\n`);
+            return result;
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            console.error(`\n❌ AI Error: ${errorMsg}\n`);
+            throw error;
+          }
         };
 
         const context = await agentManager.executeAgent(agentName, inputData, aiExecutor);
-        
+
         console.log('\n📊 Execution Summary:');
         console.log(`   Tasks completed: ${context.results.length}`);
         console.log(`   Errors: ${context.errors.length}`);
-        
+
         if (context.errors.length > 0) {
           console.log('\n❌ Errors encountered:');
           for (const error of context.errors) {
             console.log(`   - ${error.task}: ${error.error}`);
           }
         }
+
+        // Clean up
+        agent.dispose();
         break;
       }
 

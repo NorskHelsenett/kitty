@@ -12,6 +12,59 @@ import { Tool } from '../plugins.js';
 
 const execAsync = promisify(exec);
 
+const KNOWN_PURL_TYPES: Record<string, string> = {
+  apk: 'Alpine APK',
+  bitbucket: 'Bitbucket repository',
+  cargo: 'Rust crates.io',
+  composer: 'PHP Composer',
+  conan: 'C/C++ Conan package',
+  deb: 'Debian package',
+  gem: 'RubyGems package',
+  generic: 'Generic artifact',
+  github: 'GitHub repository',
+  githubactions: 'GitHub Actions workflow',
+  golang: 'Go module',
+  hex: 'Erlang/Elixir Hex package',
+  maven: 'Maven Central / Java',
+  npm: 'JavaScript npm package',
+  nuget: '.NET NuGet package',
+  pypi: 'Python PyPI package',
+  rpm: 'RedHat RPM',
+  swift: 'Swift package',
+  docker: 'Container image',
+};
+
+const PURL_REGEX = /pkg:[a-z0-9.+-]+\/[^\s"'<>\]}]+/gi;
+
+function cleanPurlMatch(match: string): string | null {
+  if (!match) return null;
+  return match
+    .trim()
+    .replace(/[,)\]\}">]+$/, '');
+}
+
+function dissectPurl(purl: string) {
+  const purlRegex = /^pkg:([^\/]+)\/(?:([^\/@]+)\/)?([^@]+?)(?:@([^?#]+))?(?:\?([^#]+))?(?:#(.+))?$/;
+  const match = purl.trim().match(purlRegex);
+
+  if (!match) {
+    throw new Error('Invalid PURL format');
+  }
+
+  const [, type, namespace, name, version, qualifiers, subpath] = match;
+
+  return {
+    type,
+    namespace: namespace || null,
+    name,
+    version: version || null,
+    qualifiers: qualifiers ? Object.fromEntries(new URLSearchParams(qualifiers)) : {},
+    subpath: subpath || null,
+    ecosystem: type,
+    type_label: KNOWN_PURL_TYPES[type] || 'unknown',
+  };
+}
+
 /**
  * Parse SBOM file and extract packages
  */
@@ -115,29 +168,83 @@ const parsePURL: Tool = {
   },
   execute: async (params: { purl: string }) => {
     try {
-      // PURL format: pkg:type/namespace/name@version?qualifiers#subpath
-      const purlRegex = /^pkg:([^\/]+)\/(?:([^\/]+)\/)?([^@]+)(?:@([^?#]+))?(?:\?([^#]+))?(?:#(.+))?$/;
-      const match = params.purl.match(purlRegex);
-
-      if (!match) {
-        return `Error: Invalid PURL format`;
-      }
-
-      const [, type, namespace, name, version, qualifiers, subpath] = match;
-
-      const result = {
-        type,
-        namespace: namespace || null,
-        name,
-        version: version || null,
-        qualifiers: qualifiers ? Object.fromEntries(new URLSearchParams(qualifiers)) : {},
-        subpath: subpath || null,
-        ecosystem: type,
-      };
-
-      return JSON.stringify(result, null, 2);
+      const parsed = dissectPurl(params.purl);
+      return JSON.stringify(parsed, null, 2);
     } catch (error: any) {
       return `Error parsing PURL: ${error.message}`;
+    }
+  },
+};
+
+/**
+ * Scan SBOM file for PURLs using regex
+ */
+const scanSBOMPURLs: Tool = {
+  name: 'scan_sbom_purls',
+  description: 'Scan an SBOM file for Package URLs (PURLs) without sending the entire file to the AI model',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      file_path: {
+        type: 'string',
+        description: 'Path to the SBOM file (JSON, XML, SPDX tag/value, etc.)',
+      },
+      unique_only: {
+        type: 'boolean',
+        description: 'Return only unique PURLs (default: true)',
+      },
+      include_metadata: {
+        type: 'boolean',
+        description: 'Include parsed metadata (name, version, ecosystem) for each match (default: true)',
+      },
+    },
+    required: ['file_path'],
+  },
+  execute: async (params: { file_path: string; unique_only?: boolean; include_metadata?: boolean }) => {
+    try {
+      const content = await readFile(params.file_path, 'utf-8');
+      const matches = content.match(PURL_REGEX) || [];
+      const uniqueOnly = params.unique_only !== false;
+      const includeMetadata = params.include_metadata !== false;
+      const seen = new Set<string>();
+      const results: any[] = [];
+
+      for (const match of matches) {
+        const cleaned = cleanPurlMatch(match);
+        if (!cleaned) continue;
+        if (uniqueOnly && seen.has(cleaned)) continue;
+        seen.add(cleaned);
+
+        if (includeMetadata) {
+          try {
+            const parsed = dissectPurl(cleaned);
+            results.push({
+              purl: cleaned,
+              name: parsed.name,
+              version: parsed.version,
+              ecosystem: parsed.ecosystem,
+              namespace: parsed.namespace,
+              qualifiers: parsed.qualifiers,
+              type_label: parsed.type_label,
+            });
+          } catch (error: any) {
+            results.push({
+              purl: cleaned,
+              error: error.message,
+            });
+          }
+        } else {
+          results.push(cleaned);
+        }
+      }
+
+      return JSON.stringify({
+        total_matches: matches.length,
+        unique_purls: seen.size,
+        results,
+      }, null, 2);
+    } catch (error: any) {
+      return `Error scanning SBOM: ${error.message}`;
     }
   },
 };
@@ -337,6 +444,7 @@ const executeCommand: Tool = {
 export const tools: Tool[] = [
   parseSBOM,
   parsePURL,
+  scanSBOMPURLs,
   fetchPackageMetadata,
   checkRepoMaintenance,
   executeCommand,

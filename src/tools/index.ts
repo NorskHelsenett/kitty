@@ -1,4 +1,5 @@
 import { getCustomTools } from './executor.js';
+import { tools as sbomTools } from './sbom-tools.js';
 
 export const builtInTools = [
   {
@@ -159,6 +160,11 @@ export function getTools() {
   const customTools = getCustomTools();
   return [
     ...builtInTools,
+    ...sbomTools.map(t => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.inputSchema,
+    })),
     ...customTools.map(t => ({
       name: t.name,
       description: t.description,
