@@ -19,6 +19,22 @@ const execAsync = promisify(exec);
 const SBOM_CACHE_ROOT = path.join(os.homedir(), '.kitty', 'cache', 'github', 'sbom');
 const CACHE_DATE_PREFIX = new Date().toISOString().slice(0, 10);
 const DAILY_CACHE_DIR = path.join(SBOM_CACHE_ROOT, CACHE_DATE_PREFIX);
+const SUMMARY_KEYS = new Set([
+  'owner',
+  'repo',
+  'github_url',
+  'stars',
+  'forks',
+  'open_issues',
+  'license',
+  'archived',
+  'last_commit_sha',
+  'last_commit_date',
+  'months_since_last_commit',
+  'status',
+  'purl',
+  'version',
+]);
 
 /**
  * Initialize cache directory
@@ -35,6 +51,43 @@ function getCacheFilePath(owner: string, repo: string): string {
   return path.join(DAILY_CACHE_DIR, `${owner}__${repo}.json`);
 }
 
+function normalizeCachedPackageRecord(record: any): any {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return record;
+  }
+
+  if ('summary' in record) {
+    return record;
+  }
+
+  const summary: Record<string, any> = {};
+  SUMMARY_KEYS.forEach(key => {
+    if (key in record) {
+      summary[key] = (record as Record<string, any>)[key];
+    }
+  });
+
+  const normalized: Record<string, any> = {
+    summary,
+  };
+
+  if ('activity_snapshot' in record) {
+    normalized.activity_snapshot = record.activity_snapshot;
+  }
+  if ('activity_raw' in record) {
+    normalized.activity_raw = record.activity_raw;
+  }
+
+  for (const [key, value] of Object.entries(record)) {
+    if (key === 'activity_snapshot' || key === 'activity_raw') continue;
+    if (SUMMARY_KEYS.has(key)) continue;
+    if (key === 'summary') continue;
+    normalized[key] = value;
+  }
+
+  return normalized;
+}
+
 /**
  * Get cached GitHub data for a repository
  */
@@ -42,7 +95,7 @@ async function getCachedRepo(owner: string, repo: string): Promise<any | null> {
   try {
     const cachePath = getCacheFilePath(owner, repo);
     const cached = await fs.readFile(cachePath, 'utf-8');
-    const data = JSON.parse(cached);
+    const data = normalizeCachedPackageRecord(JSON.parse(cached));
     console.log(`   💾 Cache hit (${CACHE_DATE_PREFIX}): ${owner}/${repo}`);
     return data;
   } catch (error) {
@@ -614,8 +667,11 @@ const batchAnalyzeGitHubPackages: Tool = {
             cacheHits++;
             packages.push({
               ...cached,
-              purl: cached.purl || purl,
-              version: cached.version || version,
+              summary: {
+                ...(cached.summary || {}),
+                purl: cached.summary?.purl || purl,
+                version: cached.summary?.version || version,
+              },
               cached: true,
             });
             continue;
@@ -650,13 +706,15 @@ const batchAnalyzeGitHubPackages: Tool = {
               errors.push(errorMsg);
 
               packages.push({
-                purl,
-                owner,
-                repo,
-                version,
-                github_url: `https://github.com/${owner}/${repo}`,
+                summary: {
+                  owner,
+                  repo,
+                  github_url: `https://github.com/${owner}/${repo}`,
+                  status: 'unknown',
+                  purl,
+                  version,
+                },
                 error: 'Rate limited',
-                status: 'unknown',
               });
               continue;
             }
@@ -746,20 +804,22 @@ const batchAnalyzeGitHubPackages: Tool = {
               }));
 
               const packageRecord = {
-                owner,
-                repo,
-                github_url: `https://github.com/${owner}/${repo}`,
-                stars: repoData.stargazers_count,
-                forks: repoData.forks_count,
-                open_issues: repoData.open_issues_count,
-                license: repoData.license?.spdx_id || 'None',
-                archived: repoData.archived,
-                last_commit_sha: lastCommit?.sha?.substring(0, 7),
-                last_commit_date: lastCommitDate,
-                months_since_last_commit: Math.round(monthsSinceLastCommit * 10) / 10,
-                status,
-                purl,
-                version,
+                summary: {
+                  owner,
+                  repo,
+                  github_url: `https://github.com/${owner}/${repo}`,
+                  stars: repoData.stargazers_count,
+                  forks: repoData.forks_count,
+                  open_issues: repoData.open_issues_count,
+                  license: repoData.license?.spdx_id || 'None',
+                  archived: repoData.archived,
+                  last_commit_sha: lastCommit?.sha?.substring(0, 7),
+                  last_commit_date: lastCommitDate,
+                  months_since_last_commit: Math.round(monthsSinceLastCommit * 10) / 10,
+                  status,
+                  purl,
+                  version,
+                },
                 activity_snapshot: {
                   fetched_at: activityFetchedAt,
                   pull_requests: pullSummary,
@@ -783,24 +843,28 @@ const batchAnalyzeGitHubPackages: Tool = {
             } else {
               const errorDetail = `HTTP ${repoResponse.status}/${commitsResponse.status}`;
               packages.push({
-                purl,
-                owner,
-                repo,
-                version,
-                github_url: `https://github.com/${owner}/${repo}`,
+                summary: {
+                  owner,
+                  repo,
+                  github_url: `https://github.com/${owner}/${repo}`,
+                  status: 'unknown',
+                  purl,
+                  version,
+                },
                 error: `Failed to fetch from GitHub API: ${errorDetail}`,
-                status: 'unknown',
               });
             }
           } catch (apiError: any) {
             packages.push({
-              purl,
-              owner,
-              repo,
-              version,
-              github_url: `https://github.com/${owner}/${repo}`,
+              summary: {
+                owner,
+                repo,
+                github_url: `https://github.com/${owner}/${repo}`,
+                status: 'unknown',
+                purl,
+                version,
+              },
               error: `API request failed: ${apiError.message}`,
-              status: 'unknown',
             });
           }
 
@@ -835,11 +899,11 @@ const batchAnalyzeGitHubPackages: Tool = {
           hit_rate_percent: hitRatePercent,
         },
         summary: {
-          maintained: packages.filter(p => p.status === 'maintained').length,
-          stale: packages.filter(p => p.status === 'stale').length,
-          unmaintained: packages.filter(p => p.status === 'unmaintained').length,
-          archived: packages.filter(p => p.status === 'archived').length,
-          unknown: packages.filter(p => p.status === 'unknown').length,
+          maintained: packages.filter(p => p.summary?.status === 'maintained').length,
+          stale: packages.filter(p => p.summary?.status === 'stale').length,
+          unmaintained: packages.filter(p => p.summary?.status === 'unmaintained').length,
+          archived: packages.filter(p => p.summary?.status === 'archived').length,
+          unknown: packages.filter(p => !p.summary?.status || p.summary.status === 'unknown').length,
         }
       };
 
