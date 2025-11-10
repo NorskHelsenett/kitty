@@ -47,36 +47,27 @@ tasks:
   - name: generate_report
     description: Generate final comprehensive SBOM security report
     prompt: |
-      Generate a comprehensive SBOM security report from the analysis results.
+      Generate a comprehensive SBOM security report using ONLY the JSON dataset below.
+      The dataset already aggregates every analyzed package, status counts, license data,
+      curated lists (unmaintained, archived, stale, high-star, no-license), and the top 10 popular packages.
 
-      ACCUMULATED PACKAGES (all iterations):
-      ${all_batches}
+      DATASET (JSON):
+      ${report_data}
 
-      PURL STATISTICS (from SBOM):
-      ${batch_result.purl_stats}
-
-      TOTAL ANALYZED: ${total_analyzed}
-
-      The all_batches array contains ALL analyzed packages from all iterations.
-      Each package has: purl, owner, repo, status, stars, archived, last_commit_date,
-      last_commit_sha, last_commit_sha_short, last_commit_message, license, etc.
-
-      Use ALL packages in all_batches to generate comprehensive statistics.
-
-      Analyze the data and format as markdown:
+      Format the final answer exactly as markdown with the following sections:
 
       # SBOM Security Analysis Report
       *Generated: <current date and time>*
 
       ## Executive Summary
-      - **Total GitHub packages found**: ${batch_result.total_packages}
-      - **Successfully analyzed**: ${total_analyzed}
-      - **Failed/Unknown**: <count packages with status='unknown'>
+      - **Total GitHub packages found**: metadata.total_github_packages
+      - **Successfully analyzed**: metadata.total_analyzed
+      - **Failed/Unknown**: metadata.failed_or_unknown
 
       ## Package Statistics
 
       ### By Package Type (from SBOM)
-      Analyze ${batch_result.purl_stats} and create table:
+      Use metadata.purl_stats to create table:
       | Type | Count | Description |
       |------|-------|-------------|
       | golang | X | Go modules |
@@ -87,45 +78,46 @@ tasks:
       | ... | ... | ... |
 
       ### By Maintenance Status
-      Analyze ALL packages in all_batches and count by status field:
+      Use status.counts and status.percentages to populate:
       | Status | Count | Percentage |
       |--------|-------|------------|
-      | ✅ Maintained | <count where status='maintained'> | <percent>% |
-      | ⚠️ Stale (6-12mo) | <count where status='stale'> | <percent>% |
-      | ❌ Unmaintained (12+mo) | <count where status='unmaintained'> | <percent>% |
-      | 🗄️ Archived | <count where status='archived'> | <percent>% |
-      | ❓ Unknown/Error | <count where status='unknown'> | <percent>% |
+      | ✅ Maintained | status.counts.maintained | status.percentages.maintained% |
+      | ⚠️ Stale (6-12mo) | status.counts.stale | status.percentages.stale% |
+      | ❌ Unmaintained (12+mo) | status.counts.unmaintained | status.percentages.unmaintained% |
+      | 🗄️ Archived | status.counts.archived | status.percentages.archived% |
+      | ❓ Unknown/Error | status.counts.unknown | status.percentages.unknown% |
 
       ### By License
-      Analyze all_batches and count by license field, show top 5:
+      Use licenses.top (already sorted) to populate:
       | License | Count |
       |---------|-------|
-      | MIT | <count> |
-      | Apache-2.0 | <count> |
+      | MIT | ... |
+      | Apache-2.0 | ... |
       | ... | ... |
 
       ## ⚠️ Non-Active Projects
 
       ### Unmaintained Packages (12+ months without updates)
-      Filter all_batches where status='unmaintained' and create table:
+      Use groups.unmaintained.items (note total for overall count) to create table:
       | Package | Version | Last Commit | Stars | Status |
       |---------|---------|-------------|-------|--------|
-      | [owner/repo](github_url) | version | SHA (date) | ⭐ count | months ago |
+      | [owner/repo](github_url) | version | SHA (date) | ⭐ count | months_since_last_commit months ago |
+      Mention if only a subset is shown (groups.unmaintained.total total items).
 
       ### Archived Packages
-      Filter all_batches where archived=true and create table:
+      Use groups.archived.items (and note total) to create table:
       | Package | Version | Last Commit | Stars |
       |---------|---------|-------------|-------|
       | [owner/repo](github_url) | version | SHA (date) | ⭐ count |
 
       ### Stale Packages (6-12 months without updates)
-      Filter all_batches where status='stale' and create table:
+      Use groups.stale.items (and note total) to create table:
       | Package | Version | Last Commit | Stars |
       |---------|---------|-------------|-------|
       | [owner/repo](github_url) | version | SHA (date) | ⭐ count |
 
       ## Top 10 Most Popular Packages
-      Sort all_batches by stars descending, take top 10:
+      Use popular.top_10 (already sorted):
       | Rank | Package | Stars | Status | Last Update |
       |------|---------|-------|--------|-------------|
       | 1 | [owner/repo](github_url) | ⭐ count | status | date |
@@ -133,23 +125,21 @@ tasks:
       ## Security Recommendations
 
       ### 🔴 Critical (Immediate Action Required)
-      Analyze all_batches and list:
+      Use groups.archived.items and groups.unmaintained_high_star.items to list:
       - All archived packages (need replacement)
       - Unmaintained packages with >1000 stars (high-usage dependencies at risk)
 
       ### 🟡 Warning (Monitor Closely)
-      Analyze all_batches and list:
+      Use groups.stale.items and groups.no_license.items to list:
       - Stale packages (6-12 months old) approaching unmaintained status
       - Packages with no license information
 
       ### 🟢 Good
-      Calculate from all_batches:
+      Use status.percentages.maintained and groups.maintained_high_star.items:
       - X% of packages are actively maintained (<6 months)
       - Highlight well-maintained critical dependencies (high stars + maintained status)
 
       ## Overall Risk Assessment
-      - **Risk Level**: Low/Medium/High (calculate based on percentages)
-      - **Justification**: Based on counts of unmaintained/archived packages
-
-      Use actual data from all_batches (${total_analyzed} packages). Be specific with numbers and dates.
+      - **Risk Level**: Low/Medium/High (calculate based on the dataset)
+      - **Justification**: Use counts of unmaintained/archived packages and percentage of unknowns
     output: report

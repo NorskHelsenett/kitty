@@ -16,7 +16,7 @@
 		"--env",
 		"WAYLAND_DISPLAY="
 	],
-	"postCreateCommand": "curl -fsSL https://bun.com/install | bash && echo 'export PATH=\"$HOME/.bun/bin:$PATH\"' >> ~/.bashrc",
+	"postCreateCommand": "bash .devcontainer/post-create.sh",
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.

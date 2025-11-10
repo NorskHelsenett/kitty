@@ -17,17 +17,22 @@ const execAsync = promisify(exec);
 
 // Cache directory for GitHub API responses
 const CACHE_DIR = path.join(os.homedir(), '.kitty', 'cache', 'github');
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_DATE_PREFIX = new Date().toISOString().slice(0, 10);
+const DAILY_CACHE_DIR = path.join(CACHE_DIR, CACHE_DATE_PREFIX);
 
 /**
  * Initialize cache directory
  */
 async function initCache(): Promise<void> {
   try {
-    await fs.mkdir(CACHE_DIR, { recursive: true });
+    await fs.mkdir(DAILY_CACHE_DIR, { recursive: true });
   } catch (error) {
     // Ignore if already exists
   }
+}
+
+function getCacheFilePath(owner: string, repo: string): string {
+  return path.join(DAILY_CACHE_DIR, `${owner}__${repo}.json`);
 }
 
 /**
@@ -35,21 +40,10 @@ async function initCache(): Promise<void> {
  */
 async function getCachedRepo(owner: string, repo: string): Promise<any | null> {
   try {
-    const cacheKey = `${owner}__${repo}.json`;
-    const cachePath = path.join(CACHE_DIR, cacheKey);
-
-    const stat = await fs.stat(cachePath);
-    const age = Date.now() - stat.mtimeMs;
-
-    // Check if cache is still valid
-    if (age > CACHE_TTL_MS) {
-      console.log(`   ⏰ Cache expired for ${owner}/${repo} (${Math.round(age / 1000 / 60 / 60)}h old)`);
-      return null;
-    }
-
+    const cachePath = getCacheFilePath(owner, repo);
     const cached = await fs.readFile(cachePath, 'utf-8');
     const data = JSON.parse(cached);
-    console.log(`   💾 Cache hit: ${owner}/${repo}`);
+    console.log(`   💾 Cache hit (${CACHE_DATE_PREFIX}): ${owner}/${repo}`);
     return data;
   } catch (error) {
     // Cache miss
@@ -63,10 +57,9 @@ async function getCachedRepo(owner: string, repo: string): Promise<any | null> {
 async function setCachedRepo(owner: string, repo: string, data: any): Promise<void> {
   try {
     await initCache();
-    const cacheKey = `${owner}__${repo}.json`;
-    const cachePath = path.join(CACHE_DIR, cacheKey);
+    const cachePath = getCacheFilePath(owner, repo);
     await fs.writeFile(cachePath, JSON.stringify(data, null, 2), 'utf-8');
-    console.log(`   💾 Cached: ${owner}/${repo}`);
+    console.log(`   💾 Cached (${CACHE_DATE_PREFIX}): ${owner}/${repo}`);
   } catch (error) {
     console.error(`   ⚠️  Failed to cache ${owner}/${repo}:`, error);
   }
@@ -621,8 +614,8 @@ const batchAnalyzeGitHubPackages: Tool = {
             cacheHits++;
             packages.push({
               ...cached,
-              purl,
-              version,
+              purl: cached.purl || purl,
+              version: cached.version || version,
               cached: true,
             });
             continue;
@@ -675,7 +668,7 @@ const batchAnalyzeGitHubPackages: Tool = {
                 status = 'stale';
               }
 
-              const packageData = {
+              const packageRecord = {
                 owner,
                 repo,
                 github_url: `https://github.com/${owner}/${repo}`,
@@ -688,15 +681,16 @@ const batchAnalyzeGitHubPackages: Tool = {
                 last_commit_date: lastCommitDate,
                 months_since_last_commit: Math.round(monthsSinceLastCommit * 10) / 10,
                 status,
+                purl,
+                version,
               };
 
               // Cache successful response
-              await setCachedRepo(owner, repo, packageData);
+              await setCachedRepo(owner, repo, packageRecord);
 
               packages.push({
-                purl,
-                version,
-                ...packageData,
+                ...packageRecord,
+                cached: false,
               });
             } else {
               const errorDetail = `HTTP ${repoResponse.status}/${commitsResponse.status}`;
@@ -733,7 +727,10 @@ const batchAnalyzeGitHubPackages: Tool = {
         }
       }
 
-      console.log(`   📊 Cache stats: ${cacheHits} hits, ${cacheMisses} misses (${Math.round(cacheHits / (cacheHits + cacheMisses) * 100)}% hit rate)`);
+      const totalCacheLookups = cacheHits + cacheMisses;
+      const hitRatePercent = totalCacheLookups > 0 ? Math.round((cacheHits / totalCacheLookups) * 100) : 0;
+
+      console.log(`   📊 Cache stats: ${cacheHits} hits, ${cacheMisses} misses (${hitRatePercent}% hit rate)`);
 
       const batchResult = {
         total_packages: purls.length,
@@ -747,7 +744,7 @@ const batchAnalyzeGitHubPackages: Tool = {
         cache_stats: {
           hits: cacheHits,
           misses: cacheMisses,
-          hit_rate_percent: cacheHits + cacheMisses > 0 ? Math.round(cacheHits / (cacheHits + cacheMisses) * 100) : 0,
+          hit_rate_percent: hitRatePercent,
         },
         summary: {
           maintained: packages.filter(p => p.status === 'maintained').length,

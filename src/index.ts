@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import OpenAI from 'openai';
 import { ChatUI } from './ui.js';
 import { AIAgent } from './agent.js';
 import { PluginManager } from './plugin-manager.js';
@@ -399,23 +400,27 @@ async function runAgentCommand() {
 
         console.log(`Running agent: ${agentName}`);
 
-        // Create AI agent for executing prompts
-        const agent = new AIAgent();
-        await agent.initialize();
+        const modelConfig = workflow.model || {};
+        const modelName = modelConfig.name || config.getDefaultModel();
+        const modelApiKey = modelConfig.apiKey || config.getApiKey();
+        const modelBaseURL = modelConfig.baseURL || config.getBaseURL();
+        const maxTokens = modelConfig.maxTokens || 2000;
+        const temperature = modelConfig.temperature ?? 0.7;
+
+        const aiClient = new OpenAI({
+          apiKey: modelApiKey,
+          baseURL: modelBaseURL,
+        });
 
         // AI executor that actually calls the AI model
         const aiExecutor = async (prompt: string) => {
           console.log(`\n🤖 AI Prompt:\n${prompt}\n`);
 
-          // Use the OpenAI client directly for simple completions
-          const client = agent.getClient();
-          const modelName = workflow.model?.name || agent.getCurrentModel();
-
           try {
-            const response = await client.chat.completions.create({
+            const response = await aiClient.chat.completions.create({
               model: modelName,
-              max_tokens: workflow.model?.maxTokens || 2000,
-              temperature: workflow.model?.temperature || 0.7,
+              max_tokens: maxTokens,
+              temperature,
               messages: [
                 {
                   role: 'system',
@@ -468,9 +473,6 @@ async function runAgentCommand() {
           console.log(context.variables.final_report);
           console.log('\n' + '='.repeat(80) + '\n');
         }
-
-        // Clean up
-        agent.dispose();
         break;
       }
 

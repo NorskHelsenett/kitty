@@ -267,6 +267,16 @@ export class AgentManager {
 
               console.log(`   📦 Accumulated ${result.packages.length} packages (total: ${context.variables.total_analyzed})`);
             }
+
+            if (result.purl_stats) {
+              context.variables.purl_stats = result.purl_stats;
+            }
+
+            if (typeof result.total_packages === 'number') {
+              context.variables.total_github_packages = result.total_packages;
+            }
+
+            this.updateReportData(context);
           }
 
           context.results.push({
@@ -512,6 +522,163 @@ export class AgentManager {
     }
 
     return true; // Default to true if can't parse
+  }
+
+  private updateReportData(context: AgentContext): void {
+    if (!Array.isArray(context.variables.all_batches)) {
+      return;
+    }
+
+    const packages = context.variables.all_batches;
+    const totalPackages =
+      typeof context.variables.total_github_packages === 'number'
+        ? context.variables.total_github_packages
+        : packages.length;
+    const purlStats = context.variables.purl_stats;
+
+    context.variables.report_data = this.buildReportData(packages, totalPackages, purlStats);
+  }
+
+  private buildReportData(
+    packages: any[],
+    totalPackages: number,
+    purlStats?: Record<string, number>
+  ): any {
+    const totalAnalyzed = packages.length;
+
+    const statusOrder = ['maintained', 'stale', 'unmaintained', 'archived', 'unknown'];
+    const statusCounts: Record<string, number> = {
+      maintained: 0,
+      stale: 0,
+      unmaintained: 0,
+      archived: 0,
+      unknown: 0,
+    };
+
+    const licenseCounts: Record<string, number> = {};
+
+    for (const pkg of packages) {
+      const statusKey = (pkg.status || 'unknown').toLowerCase();
+      if (statusKey in statusCounts) {
+        statusCounts[statusKey]++;
+      } else {
+        statusCounts.unknown++;
+      }
+
+      const license =
+        typeof pkg.license === 'string' && pkg.license.trim().length > 0
+          ? pkg.license
+          : 'Unknown';
+      licenseCounts[license] = (licenseCounts[license] || 0) + 1;
+    }
+
+    const percentages: Record<string, number> = {};
+    for (const key of statusOrder) {
+      const value = statusCounts[key] || 0;
+      percentages[key] =
+        totalAnalyzed > 0 ? Math.round((value / totalAnalyzed) * 1000) / 10 : 0;
+    }
+
+    const topLicenses = Object.entries(licenseCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([license, count]) => ({ license, count }));
+
+    const toPackageView = (pkg: any) => ({
+      owner: pkg.owner,
+      repo: pkg.repo,
+      package: [pkg.owner, pkg.repo].filter(Boolean).join('/'),
+      github_url: pkg.github_url,
+      version: pkg.version || null,
+      last_commit_sha: pkg.last_commit_sha || pkg.last_commit_sha_short || null,
+      last_commit_date: pkg.last_commit_date || null,
+      stars: pkg.stars ?? 0,
+      status: pkg.status || 'unknown',
+      archived: Boolean(pkg.archived),
+      months_since_last_commit: pkg.months_since_last_commit ?? null,
+      license: pkg.license || null,
+    });
+
+    const limitItems = (list: any[], max = 50) => list.slice(0, max);
+
+    const unmaintainedList = packages
+      .filter(pkg => pkg.status === 'unmaintained')
+      .map(toPackageView);
+    const archivedList = packages
+      .filter(pkg => pkg.archived === true || pkg.status === 'archived')
+      .map(toPackageView);
+    const staleList = packages
+      .filter(pkg => pkg.status === 'stale')
+      .map(toPackageView);
+    const noLicenseList = packages
+      .filter(
+        pkg =>
+          !pkg.license ||
+          pkg.license === 'None' ||
+          pkg.license === 'unknown' ||
+          pkg.license === 'NOASSERTION'
+      )
+      .map(toPackageView);
+
+    const unmaintainedHighStar = unmaintainedList.filter(pkg => (pkg.stars || 0) >= 1000);
+    const maintainedHighStar = packages
+      .filter(pkg => pkg.status === 'maintained' && (pkg.stars || 0) >= 1000)
+      .sort((a, b) => (b.stars || 0) - (a.stars || 0))
+      .map(toPackageView);
+
+    const topPopular = [...packages]
+      .sort((a, b) => (b.stars || 0) - (a.stars || 0))
+      .slice(0, 10)
+      .map(toPackageView);
+
+    const summary = {
+      metadata: {
+        total_github_packages: totalPackages,
+        total_analyzed: totalAnalyzed,
+        failed_or_unknown: statusCounts.unknown,
+        generated_at: new Date().toISOString(),
+        purl_stats: purlStats || null,
+      },
+      status: {
+        counts: statusCounts,
+        percentages,
+      },
+      licenses: {
+        top: topLicenses,
+        unique_total: Object.keys(licenseCounts).length,
+      },
+      groups: {
+        unmaintained: {
+          total: unmaintainedList.length,
+          items: limitItems(unmaintainedList),
+        },
+        archived: {
+          total: archivedList.length,
+          items: limitItems(archivedList),
+        },
+        stale: {
+          total: staleList.length,
+          items: limitItems(staleList),
+        },
+        no_license: {
+          total: noLicenseList.length,
+          items: limitItems(noLicenseList),
+        },
+        unmaintained_high_star: {
+          total: unmaintainedHighStar.length,
+          items: limitItems(unmaintainedHighStar),
+        },
+        maintained_high_star: {
+          total: maintainedHighStar.length,
+          items: limitItems(maintainedHighStar),
+        },
+      },
+      popular: {
+        top_10: topPopular,
+      },
+    };
+
+    return summary;
   }
 
   /**
