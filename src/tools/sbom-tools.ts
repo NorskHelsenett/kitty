@@ -16,9 +16,9 @@ import { Tool } from '../plugins.js';
 const execAsync = promisify(exec);
 
 // Cache directory for GitHub API responses
-const CACHE_DIR = path.join(os.homedir(), '.kitty', 'cache', 'github');
+const SBOM_CACHE_ROOT = path.join(os.homedir(), '.kitty', 'cache', 'github', 'sbom');
 const CACHE_DATE_PREFIX = new Date().toISOString().slice(0, 10);
-const DAILY_CACHE_DIR = path.join(CACHE_DIR, CACHE_DATE_PREFIX);
+const DAILY_CACHE_DIR = path.join(SBOM_CACHE_ROOT, CACHE_DATE_PREFIX);
 
 /**
  * Initialize cache directory
@@ -625,13 +625,25 @@ const batchAnalyzeGitHubPackages: Tool = {
 
           // Fetch from GitHub API
           try {
-            const [repoResponse, commitsResponse] = await Promise.all([
+            const [
+              repoResponse,
+              commitsResponse,
+              pullsResponse,
+              issuesResponse,
+              releasesResponse
+            ] = await Promise.all([
               fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers }),
-              fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1`, { headers })
+              fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1`, { headers }),
+              fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=10`, { headers }),
+              fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=all&sort=updated&direction=desc&per_page=100`, { headers }),
+              fetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=10`, { headers })
             ]);
 
             // Check for rate limiting
-            if (repoResponse.status === 403 || commitsResponse.status === 403) {
+            const rateLimited = [repoResponse, commitsResponse, pullsResponse, issuesResponse, releasesResponse]
+              .some(response => response.status === 403);
+
+            if (rateLimited) {
               const rateLimitReset = repoResponse.headers.get('x-ratelimit-reset');
               const resetTime = rateLimitReset ? new Date(parseInt(rateLimitReset) * 1000).toLocaleTimeString() : 'unknown';
               const errorMsg = `Rate limited by GitHub API. Reset at: ${resetTime}. Set GITHUB_TOKEN env var for higher limits.`;
@@ -654,6 +666,30 @@ const batchAnalyzeGitHubPackages: Tool = {
               const commitsData = await commitsResponse.json();
               const lastCommit = commitsData[0];
 
+              const asArray = (value: any) => (Array.isArray(value) ? value : []);
+
+              let pullRequestsRaw: any[] = [];
+              if (pullsResponse.ok) {
+                pullRequestsRaw = asArray(await pullsResponse.json());
+              } else {
+                errors.push(`Failed to fetch pull requests for ${owner}/${repo}: HTTP ${pullsResponse.status}`);
+              }
+
+              let issuesRawResponse: any[] = [];
+              if (issuesResponse.ok) {
+                issuesRawResponse = asArray(await issuesResponse.json());
+              } else {
+                errors.push(`Failed to fetch issues for ${owner}/${repo}: HTTP ${issuesResponse.status}`);
+              }
+              const issuesRaw = issuesRawResponse.filter(issue => !issue.pull_request);
+
+              let releasesRaw: any[] = [];
+              if (releasesResponse.ok) {
+                releasesRaw = asArray(await releasesResponse.json());
+              } else {
+                errors.push(`Failed to fetch releases for ${owner}/${repo}: HTTP ${releasesResponse.status}`);
+              }
+
               const lastCommitDate = lastCommit?.commit?.author?.date;
               const monthsSinceLastCommit = lastCommitDate
                 ? (Date.now() - new Date(lastCommitDate).getTime()) / (1000 * 60 * 60 * 24 * 30)
@@ -667,6 +703,47 @@ const batchAnalyzeGitHubPackages: Tool = {
               } else if (monthsSinceLastCommit > 6) {
                 status = 'stale';
               }
+
+              const activityFetchedAt = new Date().toISOString();
+
+              const pullSummary = pullRequestsRaw.map(pr => ({
+                number: pr.number,
+                title: pr.title,
+                state: pr.state,
+                author: pr.user?.login,
+                created_at: pr.created_at,
+                updated_at: pr.updated_at,
+                closed_at: pr.closed_at,
+                merged_at: pr.merged_at,
+                draft: pr.draft,
+                url: pr.html_url,
+              }));
+
+              const issueSummary = issuesRaw.map(issue => ({
+                number: issue.number,
+                title: issue.title,
+                state: issue.state,
+                author: issue.user?.login,
+                created_at: issue.created_at,
+                updated_at: issue.updated_at,
+                closed_at: issue.closed_at,
+                comments: issue.comments,
+                labels: (issue.labels || []).map((label: any) => typeof label === 'string' ? label : label.name),
+                url: issue.html_url,
+              }));
+
+              const releaseSummary = releasesRaw.map(release => ({
+                id: release.id,
+                name: release.name || release.tag_name,
+                tag_name: release.tag_name,
+                author: release.author?.login,
+                created_at: release.created_at,
+                published_at: release.published_at,
+                draft: release.draft,
+                prerelease: release.prerelease,
+                body: release.body,
+                url: release.html_url,
+              }));
 
               const packageRecord = {
                 owner,
@@ -683,6 +760,17 @@ const batchAnalyzeGitHubPackages: Tool = {
                 status,
                 purl,
                 version,
+                activity_snapshot: {
+                  fetched_at: activityFetchedAt,
+                  pull_requests: pullSummary,
+                  issues: issueSummary,
+                  releases: releaseSummary,
+                },
+                activity_raw: {
+                  pull_requests: pullRequestsRaw,
+                  issues: issuesRaw,
+                  releases: releasesRaw,
+                },
               };
 
               // Cache successful response

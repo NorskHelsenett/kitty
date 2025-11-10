@@ -5,11 +5,59 @@
  * This generates dist/index.js which is referenced in the plugin manifest
  */
 
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+
 interface Tool {
   name: string;
   description: string;
   inputSchema: any;
   execute: (params: any) => Promise<string>;
+}
+
+const GITHUB_ACTIVITY_DIR = path.join(os.homedir(), '.kitty', 'cache', 'github', 'activity');
+
+async function ensureCacheDir(): Promise<void> {
+  await fs.mkdir(GITHUB_ACTIVITY_DIR, { recursive: true });
+}
+
+function sanitizeSegment(segment: string): string {
+  return segment.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+function getActivityCachePath(owner: string, repo: string): string {
+  const safeOwner = sanitizeSegment(owner);
+  const safeRepo = sanitizeSegment(repo);
+  return path.join(GITHUB_ACTIVITY_DIR, `${safeOwner}__${safeRepo}.json`);
+}
+
+async function cacheGitHubActivity(owner: string, repo: string, payload: any): Promise<void> {
+  try {
+    await ensureCacheDir();
+    const cachePath = getActivityCachePath(owner, repo);
+    await fs.writeFile(cachePath, JSON.stringify(payload, null, 2), 'utf-8');
+  } catch (error) {
+    console.error('Failed to cache GitHub activity data', error);
+  }
+}
+
+function buildGitHubHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'Kitty-AI-Agent',
+  };
+
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  return headers;
+}
+
+function githubApiErrorMessage(response: Response, label: string): string {
+  return `GitHub ${label} request failed with ${response.status} ${response.statusText}`;
 }
 
 const getRepoInfo: Tool = {
@@ -202,8 +250,119 @@ const checkRepoMaintenance: Tool = {
   }
 };
 
+const getRepoActivity: Tool = {
+  name: 'github_repo_activity',
+  description: 'Fetch latest pull requests, issues, and releases, cache full responses, and summarize activity',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      owner: {
+        type: 'string',
+        description: 'Repository owner (username or organization)'
+      },
+      repo: {
+        type: 'string',
+        description: 'Repository name'
+      }
+    },
+    required: ['owner', 'repo']
+  },
+  execute: async (params: { owner: string; repo: string }): Promise<string> => {
+    try {
+      const headers = buildGitHubHeaders();
+      const baseUrl = `https://api.github.com/repos/${params.owner}/${params.repo}`;
+
+      const pullsPromise = fetch(`${baseUrl}/pulls?state=all&sort=updated&direction=desc&per_page=10`, { headers });
+      const issuesPromise = fetch(`${baseUrl}/issues?state=all&sort=updated&direction=desc&per_page=100`, { headers });
+      const releasesPromise = fetch(`${baseUrl}/releases?per_page=10`, { headers });
+
+      const [pullsResponse, issuesResponse, releasesResponse] = await Promise.all([
+        pullsPromise,
+        issuesPromise,
+        releasesPromise
+      ]);
+
+      if (!pullsResponse.ok) {
+        return `Error: ${githubApiErrorMessage(pullsResponse, 'pull request')}`;
+      }
+      if (!issuesResponse.ok) {
+        return `Error: ${githubApiErrorMessage(issuesResponse, 'issue')}`;
+      }
+      if (!releasesResponse.ok) {
+        return `Error: ${githubApiErrorMessage(releasesResponse, 'release')}`;
+      }
+
+      const pullRequests: any[] = await pullsResponse.json();
+      const issues: any[] = await issuesResponse.json();
+      const releases: any[] = await releasesResponse.json();
+
+      const fetchedAt = new Date().toISOString();
+
+      await cacheGitHubActivity(params.owner, params.repo, {
+        repository: `${params.owner}/${params.repo}`,
+        fetched_at: fetchedAt,
+        pull_requests: pullRequests,
+        issues,
+        releases
+      });
+
+      const pullSummary = pullRequests.map(pr => ({
+        number: pr.number,
+        title: pr.title,
+        state: pr.state,
+        author: pr.user?.login,
+        created_at: pr.created_at,
+        updated_at: pr.updated_at,
+        closed_at: pr.closed_at,
+        merged_at: pr.merged_at,
+        draft: pr.draft,
+        url: pr.html_url
+      }));
+
+      const issueSummary = issues
+        .filter(issue => !issue.pull_request)
+        .map(issue => ({
+          number: issue.number,
+          title: issue.title,
+          state: issue.state,
+          author: issue.user?.login,
+          created_at: issue.created_at,
+          updated_at: issue.updated_at,
+          closed_at: issue.closed_at,
+          comments: issue.comments,
+          labels: (issue.labels || []).map((label: any) => typeof label === 'string' ? label : label.name),
+          url: issue.html_url
+        }));
+
+      const releaseSummary = releases.map(release => ({
+        id: release.id,
+        name: release.name || release.tag_name,
+        tag_name: release.tag_name,
+        author: release.author?.login,
+        created_at: release.created_at,
+        published_at: release.published_at,
+        draft: release.draft,
+        prerelease: release.prerelease,
+        body: release.body,
+        url: release.html_url
+      }));
+
+      return JSON.stringify({
+        repository: `${params.owner}/${params.repo}`,
+        fetched_at: fetchedAt,
+        pull_requests: pullSummary,
+        issues: issueSummary.slice(0, 100),
+        releases: releaseSummary
+      }, null, 2);
+    } catch (error: any) {
+      return `Error: ${error.message}`;
+    }
+  }
+};
+
 export const tools: Tool[] = [
   getRepoInfo,
   listRepoCommits,
-  checkRepoMaintenance
+  checkRepoMaintenance,
+  getRepoActivity
 ];
