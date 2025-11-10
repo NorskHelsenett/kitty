@@ -3,193 +3,153 @@ version: 1.0.0
 description: |
   Analyzes Software Bill of Materials (SBOM) files to extract package information,
   verify repository status, and check for unmaintained dependencies.
-  
-  Supports multiple package ecosystems including npm, Go, .NET, PyPI, and more.
-  
+
+  Efficiently processes large SBOMs with hundreds of packages in batches.
+
 author: Kitty Team
 license: MIT
 
 variables:
   sbom_file: ""
   output_format: "markdown"
+  current_offset: 0
+  batch_size: 50
+  all_batches: []
+  total_analyzed: 0
 
 tasks:
-  - name: count_github_packages
-    description: Count total GitHub packages in SBOM
-    tool: execute_command
+  - name: analyze_batch
+    description: Analyze a batch of GitHub packages from SBOM
+    tool: batch_analyze_github_packages
     input:
-      command: grep -o 'pkg:golang/github.com/[^"]*' "${sbom_file}" | wc -l
-    output: package_count
+      file_path: "${sbom_file}"
+      batch_size: ${batch_size}
+      offset: ${current_offset}
+    output: batch_result
 
-  - name: get_package_1
-    description: Extract first GitHub package PURL
-    tool: execute_command
-    input:
-      command: grep -o 'pkg:golang/github.com/[^"]*' "${sbom_file}" | sed -n '1p'
-    output: purl_1
-
-  - name: parse_package_1
-    description: Parse first package PURL
-    condition: purl_1 exists
+  - name: evaluate_progress
+    description: Decide if we need to continue
     prompt: |
-      Parse this single PURL: ${purl_1}
+      Based on the batch result, determine if we should continue processing more batches.
 
-      Example: pkg:golang/github.com/gin-gonic/gin@v1.11.0
-      Extract: owner=gin-gonic, repo=gin, version=v1.11.0
+      has_more flag: ${batch_result.has_more}
+      next_offset: ${batch_result.next_offset}
 
-      Return JSON (no markdown):
-      {"owner": "username", "repo": "reponame", "purl": "${purl_1}", "version": "version"}
-    output: package_1_info
+      If has_more is true, return:
+      {"continue": true, "next_offset": ${batch_result.next_offset}, "reason": "More packages to process"}
 
-  - name: check_package_1
-    description: Check maintenance of package 1
-    condition: package_1_info exists
-    tool: github_check_maintenance
-    input:
-      owner: "${package_1_info.owner}"
-      repo: "${package_1_info.repo}"
-    output: package_1_status
+      If has_more is false, return:
+      {"continue": false, "reason": "All packages processed"}
 
-  - name: get_package_2
-    description: Extract second GitHub package PURL
-    tool: execute_command
-    input:
-      command: grep -o 'pkg:golang/github.com/[^"]*' "${sbom_file}" | sed -n '2p'
-    output: purl_2
-
-  - name: parse_package_2
-    description: Parse second package PURL
-    condition: purl_2 exists
-    prompt: |
-      Parse this single PURL: ${purl_2}
-      Return JSON (no markdown):
-      {"owner": "username", "repo": "reponame", "purl": "${purl_2}", "version": "version"}
-    output: package_2_info
-
-  - name: check_package_2
-    description: Check maintenance of package 2
-    condition: package_2_info exists
-    tool: github_check_maintenance
-    input:
-      owner: "${package_2_info.owner}"
-      repo: "${package_2_info.repo}"
-    output: package_2_status
-
-  - name: get_package_3
-    description: Extract third GitHub package PURL
-    tool: execute_command
-    input:
-      command: grep -o 'pkg:golang/github.com/[^"]*' "${sbom_file}" | sed -n '3p'
-    output: purl_3
-
-  - name: parse_package_3
-    description: Parse third package PURL
-    condition: purl_3 exists
-    prompt: |
-      Parse this single PURL: ${purl_3}
-      Return JSON (no markdown):
-      {"owner": "username", "repo": "reponame", "purl": "${purl_3}", "version": "version"}
-    output: package_3_info
-
-  - name: check_package_3
-    description: Check maintenance of package 3
-    condition: package_3_info exists
-    tool: github_check_maintenance
-    input:
-      owner: "${package_3_info.owner}"
-      repo: "${package_3_info.repo}"
-    output: package_3_status
-
-  - name: get_package_4
-    description: Extract fourth GitHub package PURL
-    tool: execute_command
-    input:
-      command: grep -o 'pkg:golang/github.com/[^"]*' "${sbom_file}" | sed -n '4p'
-    output: purl_4
-
-  - name: parse_package_4
-    description: Parse fourth package PURL
-    condition: purl_4 exists
-    prompt: |
-      Parse this single PURL: ${purl_4}
-      Return JSON (no markdown):
-      {"owner": "username", "repo": "reponame", "purl": "${purl_4}", "version": "version"}
-    output: package_4_info
-
-  - name: check_package_4
-    description: Check maintenance of package 4
-    condition: package_4_info exists
-    tool: github_check_maintenance
-    input:
-      owner: "${package_4_info.owner}"
-      repo: "${package_4_info.repo}"
-    output: package_4_status
-
-  - name: get_package_5
-    description: Extract fifth GitHub package PURL
-    tool: execute_command
-    input:
-      command: grep -o 'pkg:golang/github.com/[^"]*' "${sbom_file}" | sed -n '5p'
-    output: purl_5
-
-  - name: parse_package_5
-    description: Parse fifth package PURL
-    condition: purl_5 exists
-    prompt: |
-      Parse this single PURL: ${purl_5}
-      Return JSON (no markdown):
-      {"owner": "username", "repo": "reponame", "purl": "${purl_5}", "version": "version"}
-    output: package_5_info
-
-  - name: check_package_5
-    description: Check maintenance of package 5
-    condition: package_5_info exists
-    tool: github_check_maintenance
-    input:
-      owner: "${package_5_info.owner}"
-      repo: "${package_5_info.repo}"
-    output: package_5_status
+      Return ONLY the JSON object, no markdown or code blocks.
+    output: evaluation
 
   - name: generate_report
-    description: Generate comprehensive SBOM security report
+    description: Generate final comprehensive SBOM security report
     prompt: |
-      Generate a comprehensive SBOM security report:
+      Generate a comprehensive SBOM security report from the analysis results.
 
-      Total GitHub Packages Found: ${package_count}
+      ACCUMULATED PACKAGES (all iterations):
+      ${all_batches}
 
-      Package 1: ${package_1_info}
-      Status: ${package_1_status}
+      PURL STATISTICS (from SBOM):
+      ${batch_result.purl_stats}
 
-      Package 2: ${package_2_info}
-      Status: ${package_2_status}
+      TOTAL ANALYZED: ${total_analyzed}
 
-      Package 3: ${package_3_info}
-      Status: ${package_3_status}
+      The all_batches array contains ALL analyzed packages from all iterations.
+      Each package has: purl, owner, repo, status, stars, archived, last_commit_date,
+      last_commit_sha, last_commit_sha_short, last_commit_message, license, etc.
 
-      Package 4: ${package_4_info}
-      Status: ${package_4_status}
+      Use ALL packages in all_batches to generate comprehensive statistics.
 
-      Package 5: ${package_5_info}
-      Status: ${package_5_status}
+      Analyze the data and format as markdown:
 
-      Format as ${output_format}:
-      ## SBOM Security Analysis Report
+      # SBOM Security Analysis Report
+      *Generated: <current date and time>*
 
-      **Total Packages:** ${package_count} GitHub packages detected
+      ## Executive Summary
+      - **Total GitHub packages found**: ${batch_result.total_packages}
+      - **Successfully analyzed**: ${total_analyzed}
+      - **Failed/Unknown**: <count packages with status='unknown'>
 
-      ### Analyzed Packages
+      ## Package Statistics
 
-      For each package above, create a section with:
-      - **Package Name** and GitHub URL
-      - **Version** from PURL
-      - **Latest Commit:** SHA and date
-      - **Maintenance Status:** (maintained/stale/unmaintained/archived)
-      - **Stars/Forks/Issues**
-      - **Recommendation**
+      ### By Package Type (from SBOM)
+      Analyze ${batch_result.purl_stats} and create table:
+      | Type | Count | Description |
+      |------|-------|-------------|
+      | golang | X | Go modules |
+      | npm | X | JavaScript packages |
+      | apk | X | Alpine packages |
+      | pypi | X | Python packages |
+      | maven | X | Java packages |
+      | ... | ... | ... |
 
-      ### Security Summary
-      - List any unmaintained or archived packages
-      - Overall risk assessment
+      ### By Maintenance Status
+      Analyze ALL packages in all_batches and count by status field:
+      | Status | Count | Percentage |
+      |--------|-------|------------|
+      | ✅ Maintained | <count where status='maintained'> | <percent>% |
+      | ⚠️ Stale (6-12mo) | <count where status='stale'> | <percent>% |
+      | ❌ Unmaintained (12+mo) | <count where status='unmaintained'> | <percent>% |
+      | 🗄️ Archived | <count where status='archived'> | <percent>% |
+      | ❓ Unknown/Error | <count where status='unknown'> | <percent>% |
 
-      Keep it concise and actionable.
-    output: final_report
+      ### By License
+      Analyze all_batches and count by license field, show top 5:
+      | License | Count |
+      |---------|-------|
+      | MIT | <count> |
+      | Apache-2.0 | <count> |
+      | ... | ... |
+
+      ## ⚠️ Non-Active Projects
+
+      ### Unmaintained Packages (12+ months without updates)
+      Filter all_batches where status='unmaintained' and create table:
+      | Package | Version | Last Commit | Stars | Status |
+      |---------|---------|-------------|-------|--------|
+      | [owner/repo](github_url) | version | SHA (date) | ⭐ count | months ago |
+
+      ### Archived Packages
+      Filter all_batches where archived=true and create table:
+      | Package | Version | Last Commit | Stars |
+      |---------|---------|-------------|-------|
+      | [owner/repo](github_url) | version | SHA (date) | ⭐ count |
+
+      ### Stale Packages (6-12 months without updates)
+      Filter all_batches where status='stale' and create table:
+      | Package | Version | Last Commit | Stars |
+      |---------|---------|-------------|-------|
+      | [owner/repo](github_url) | version | SHA (date) | ⭐ count |
+
+      ## Top 10 Most Popular Packages
+      Sort all_batches by stars descending, take top 10:
+      | Rank | Package | Stars | Status | Last Update |
+      |------|---------|-------|--------|-------------|
+      | 1 | [owner/repo](github_url) | ⭐ count | status | date |
+
+      ## Security Recommendations
+
+      ### 🔴 Critical (Immediate Action Required)
+      Analyze all_batches and list:
+      - All archived packages (need replacement)
+      - Unmaintained packages with >1000 stars (high-usage dependencies at risk)
+
+      ### 🟡 Warning (Monitor Closely)
+      Analyze all_batches and list:
+      - Stale packages (6-12 months old) approaching unmaintained status
+      - Packages with no license information
+
+      ### 🟢 Good
+      Calculate from all_batches:
+      - X% of packages are actively maintained (<6 months)
+      - Highlight well-maintained critical dependencies (high stars + maintained status)
+
+      ## Overall Risk Assessment
+      - **Risk Level**: Low/Medium/High (calculate based on percentages)
+      - **Justification**: Based on counts of unmaintained/archived packages
+
+      Use actual data from all_batches (${total_analyzed} packages). Be specific with numbers and dates.
+    output: report

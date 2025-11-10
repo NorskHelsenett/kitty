@@ -8,9 +8,69 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { readFile } from 'fs/promises';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import * as os from 'os';
 import { Tool } from '../plugins.js';
 
 const execAsync = promisify(exec);
+
+// Cache directory for GitHub API responses
+const CACHE_DIR = path.join(os.homedir(), '.kitty', 'cache', 'github');
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Initialize cache directory
+ */
+async function initCache(): Promise<void> {
+  try {
+    await fs.mkdir(CACHE_DIR, { recursive: true });
+  } catch (error) {
+    // Ignore if already exists
+  }
+}
+
+/**
+ * Get cached GitHub data for a repository
+ */
+async function getCachedRepo(owner: string, repo: string): Promise<any | null> {
+  try {
+    const cacheKey = `${owner}__${repo}.json`;
+    const cachePath = path.join(CACHE_DIR, cacheKey);
+
+    const stat = await fs.stat(cachePath);
+    const age = Date.now() - stat.mtimeMs;
+
+    // Check if cache is still valid
+    if (age > CACHE_TTL_MS) {
+      console.log(`   ⏰ Cache expired for ${owner}/${repo} (${Math.round(age / 1000 / 60 / 60)}h old)`);
+      return null;
+    }
+
+    const cached = await fs.readFile(cachePath, 'utf-8');
+    const data = JSON.parse(cached);
+    console.log(`   💾 Cache hit: ${owner}/${repo}`);
+    return data;
+  } catch (error) {
+    // Cache miss
+    return null;
+  }
+}
+
+/**
+ * Save GitHub data to cache
+ */
+async function setCachedRepo(owner: string, repo: string, data: any): Promise<void> {
+  try {
+    await initCache();
+    const cacheKey = `${owner}__${repo}.json`;
+    const cachePath = path.join(CACHE_DIR, cacheKey);
+    await fs.writeFile(cachePath, JSON.stringify(data, null, 2), 'utf-8');
+    console.log(`   💾 Cached: ${owner}/${repo}`);
+  } catch (error) {
+    console.error(`   ⚠️  Failed to cache ${owner}/${repo}:`, error);
+  }
+}
 
 const KNOWN_PURL_TYPES: Record<string, string> = {
   apk: 'Alpine APK',
@@ -418,13 +478,13 @@ const executeCommand: Tool = {
         timeout: params.timeout || 30000,
         maxBuffer: 1024 * 1024 * 10, // 10MB
       };
-      
+
       if (params.cwd) {
         options.cwd = params.cwd;
       }
 
       const { stdout, stderr } = await execAsync(params.command, options);
-      
+
       return JSON.stringify({
         success: true,
         stdout: String(stdout).trim(),
@@ -441,6 +501,255 @@ const executeCommand: Tool = {
   },
 };
 
+/**
+ * Batch analyze GitHub packages from SBOM
+ */
+const batchAnalyzeGitHubPackages: Tool = {
+  name: 'batch_analyze_github_packages',
+  description: 'Efficiently analyze multiple GitHub packages from SBOM in batches',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      file_path: {
+        type: 'string',
+        description: 'Path to SBOM file',
+      },
+      batch_size: {
+        type: 'number',
+        description: 'Number of packages to analyze per batch (default: 20)',
+      },
+      offset: {
+        type: 'number',
+        description: 'Starting offset for batch processing (default: 0)',
+      },
+    },
+    required: ['file_path'],
+  },
+  execute: async (params: { file_path: string; batch_size?: number; offset?: number }) => {
+    try {
+      const batchSize = params.batch_size || 20;
+      const offset = params.offset || 0;
+
+      // Get GitHub token from environment if available
+      const githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+      const headers: Record<string, string> = {
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'Kitty-AI-Agent'
+      };
+
+      if (githubToken) {
+        headers['Authorization'] = `Bearer ${githubToken}`;
+        console.log('   Using GitHub token for authentication');
+      } else {
+        console.log('   ⚠️  No GITHUB_TOKEN found - using unauthenticated requests (60 req/hour limit)');
+      }
+
+      // Extract GitHub PURLs from SBOM
+      const { stdout } = await execAsync(`grep -o 'pkg:golang/github.com/[^"]*' "${params.file_path}"`);
+      const purls = stdout.trim().split('\n').filter(Boolean);
+
+      // Also get overall PURL statistics for context
+      let purlStats: Record<string, number> = {};
+      try {
+        const { stdout: allPurls } = await execAsync(`grep -o 'pkg:[^"]*' "${params.file_path}"`);
+        const allPurlsList = allPurls.trim().split('\n').filter(Boolean);
+
+        allPurlsList.forEach(purl => {
+          const typeMatch = purl.match(/^pkg:([^\/]+)\//);
+          if (typeMatch) {
+            const type = typeMatch[1];
+            purlStats[type] = (purlStats[type] || 0) + 1;
+          }
+        });
+      } catch (err) {
+        // Ignore if grep fails
+      }
+
+      if (purls.length === 0) {
+        return JSON.stringify({
+          total_packages: 0,
+          analyzed_count: 0,
+          packages: [],
+          has_more: false,
+        }, null, 2);
+      }
+
+      // Get batch of PURLs
+      const batchPurls = purls.slice(offset, offset + batchSize);
+      const packages: any[] = [];
+      const errors: string[] = [];
+      let cacheHits = 0;
+      let cacheMisses = 0;
+
+      // Parse each PURL and fetch GitHub data
+      for (const purl of batchPurls) {
+        try {
+          // Parse PURL: pkg:golang/github.com/owner/repo@version
+          const match = purl.match(/pkg:golang\/github\.com\/([^\/]+)\/([^@]+)(?:@(.+))?/);
+          if (!match) continue;
+
+          let [, owner, rawRepo, version] = match;
+
+          // Strip Go module version suffixes (e.g., /v2, /v3, /v4)
+          // These are semantic versioning paths, not part of the actual repo name
+          const repo = rawRepo.replace(/\/v\d+$/, '');
+
+          console.log(`   Parsing: ${owner}/${rawRepo} → ${owner}/${repo}`);
+
+          // Check cache first
+          const cached = await getCachedRepo(owner, repo);
+          if (cached) {
+            cacheHits++;
+            packages.push({
+              ...cached,
+              purl,
+              version,
+              cached: true,
+            });
+            continue;
+          }
+
+          cacheMisses++;
+
+          // Fetch from GitHub API
+          try {
+            const [repoResponse, commitsResponse] = await Promise.all([
+              fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers }),
+              fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1`, { headers })
+            ]);
+
+            // Check for rate limiting
+            if (repoResponse.status === 403 || commitsResponse.status === 403) {
+              const rateLimitReset = repoResponse.headers.get('x-ratelimit-reset');
+              const resetTime = rateLimitReset ? new Date(parseInt(rateLimitReset) * 1000).toLocaleTimeString() : 'unknown';
+              const errorMsg = `Rate limited by GitHub API. Reset at: ${resetTime}. Set GITHUB_TOKEN env var for higher limits.`;
+              errors.push(errorMsg);
+
+              packages.push({
+                purl,
+                owner,
+                repo,
+                version,
+                github_url: `https://github.com/${owner}/${repo}`,
+                error: 'Rate limited',
+                status: 'unknown',
+              });
+              continue;
+            }
+
+            if (repoResponse.ok && commitsResponse.ok) {
+              const repoData = await repoResponse.json();
+              const commitsData = await commitsResponse.json();
+              const lastCommit = commitsData[0];
+
+              const lastCommitDate = lastCommit?.commit?.author?.date;
+              const monthsSinceLastCommit = lastCommitDate
+                ? (Date.now() - new Date(lastCommitDate).getTime()) / (1000 * 60 * 60 * 24 * 30)
+                : Infinity;
+
+              let status = 'maintained';
+              if (repoData.archived || repoData.disabled) {
+                status = 'archived';
+              } else if (monthsSinceLastCommit > 12) {
+                status = 'unmaintained';
+              } else if (monthsSinceLastCommit > 6) {
+                status = 'stale';
+              }
+
+              const packageData = {
+                owner,
+                repo,
+                github_url: `https://github.com/${owner}/${repo}`,
+                stars: repoData.stargazers_count,
+                forks: repoData.forks_count,
+                open_issues: repoData.open_issues_count,
+                license: repoData.license?.spdx_id || 'None',
+                archived: repoData.archived,
+                last_commit_sha: lastCommit?.sha?.substring(0, 7),
+                last_commit_date: lastCommitDate,
+                months_since_last_commit: Math.round(monthsSinceLastCommit * 10) / 10,
+                status,
+              };
+
+              // Cache successful response
+              await setCachedRepo(owner, repo, packageData);
+
+              packages.push({
+                purl,
+                version,
+                ...packageData,
+              });
+            } else {
+              const errorDetail = `HTTP ${repoResponse.status}/${commitsResponse.status}`;
+              packages.push({
+                purl,
+                owner,
+                repo,
+                version,
+                github_url: `https://github.com/${owner}/${repo}`,
+                error: `Failed to fetch from GitHub API: ${errorDetail}`,
+                status: 'unknown',
+              });
+            }
+          } catch (apiError: any) {
+            packages.push({
+              purl,
+              owner,
+              repo,
+              version,
+              github_url: `https://github.com/${owner}/${repo}`,
+              error: `API request failed: ${apiError.message}`,
+              status: 'unknown',
+            });
+          }
+
+          // Rate limiting: delay between requests (smaller delay with token)
+          // Skip delay if using cache
+          if (cacheMisses > 0) {
+            await new Promise(resolve => setTimeout(resolve, githubToken ? 100 : 1000));
+          }
+        } catch (parseError) {
+          // Skip invalid PURLs
+          continue;
+        }
+      }
+
+      console.log(`   📊 Cache stats: ${cacheHits} hits, ${cacheMisses} misses (${Math.round(cacheHits / (cacheHits + cacheMisses) * 100)}% hit rate)`);
+
+      return JSON.stringify({
+        total_packages: purls.length,
+        analyzed_count: packages.length,
+        offset,
+        next_offset: offset + batchSize,
+        has_more: offset + batchSize < purls.length,
+        packages,
+        errors: errors.length > 0 ? errors : undefined,
+        purl_stats: Object.keys(purlStats).length > 0 ? purlStats : undefined,
+        cache_stats: {
+          hits: cacheHits,
+          misses: cacheMisses,
+          hit_rate_percent: cacheHits + cacheMisses > 0 ? Math.round(cacheHits / (cacheHits + cacheMisses) * 100) : 0,
+        },
+        summary: {
+          maintained: packages.filter(p => p.status === 'maintained').length,
+          stale: packages.filter(p => p.status === 'stale').length,
+          unmaintained: packages.filter(p => p.status === 'unmaintained').length,
+          archived: packages.filter(p => p.status === 'archived').length,
+          unknown: packages.filter(p => p.status === 'unknown').length,
+        }
+      }, null, 2);
+    } catch (error: any) {
+      return JSON.stringify({
+        error: `Batch analysis failed: ${error.message}`,
+        total_packages: 0,
+        analyzed_count: 0,
+        packages: [],
+        has_more: false,
+      }, null, 2);
+    }
+  },
+};
+
 export const tools: Tool[] = [
   parseSBOM,
   parsePURL,
@@ -448,4 +757,5 @@ export const tools: Tool[] = [
   fetchPackageMetadata,
   checkRepoMaintenance,
   executeCommand,
+  batchAnalyzeGitHubPackages,
 ];

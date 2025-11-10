@@ -451,6 +451,24 @@ async function runAgentCommand() {
           }
         }
 
+        // Display final report if available
+        if (context.variables.report) {
+          console.log('\n' + '='.repeat(80));
+          console.log('📄 FINAL REPORT');
+          console.log('='.repeat(80) + '\n');
+          console.log(context.variables.report);
+          console.log('\n' + '='.repeat(80) + '\n');
+        }
+
+        // Display other key outputs
+        if (context.variables.final_report && !context.variables.report) {
+          console.log('\n' + '='.repeat(80));
+          console.log('📄 FINAL REPORT');
+          console.log('='.repeat(80) + '\n');
+          console.log(context.variables.final_report);
+          console.log('\n' + '='.repeat(80) + '\n');
+        }
+
         // Clean up
         agent.dispose();
         break;

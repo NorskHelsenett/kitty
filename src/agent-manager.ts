@@ -195,64 +195,135 @@ export class AgentManager {
     console.log(`\n🤖 Starting agent: ${workflow.name}`);
     console.log(`📋 Description: ${workflow.description}\n`);
 
-    for (const task of workflow.tasks) {
-      try {
-        // Check condition if present
-        if (task.condition) {
-          const shouldExecute = this.evaluateCondition(task.condition, context);
-          if (!shouldExecute) {
-            console.log(`⏭️  Skipping task: ${task.name} (condition not met)`);
-            continue;
-          }
-        }
+    // Support iterative execution with continuation
+    const maxIterations = 50; // Safety limit
+    let iteration = 0;
 
-        console.log(`▶️  Executing task: ${task.name}`);
+    while (iteration < maxIterations) {
+      iteration++;
 
-        let result: any;
-
-        // Execute based on task type
-        if (task.tool) {
-          // Execute a specific tool
-          result = await this.executeTool(task, context);
-        } else if (task.prompt && aiExecutor) {
-          // Execute AI prompt - resolve template variables first
-          const resolvedPrompt = this.resolvePrompt(task.prompt, context);
-          result = await aiExecutor(resolvedPrompt, context);
-
-          // Try to parse JSON responses (strip markdown code blocks if present)
-          result = this.parseAIResponse(result);
-        } else {
-          throw new Error(`Task ${task.name} has neither tool nor prompt specified`);
-        }
-
-        // Store result in variables if output is specified
-        if (task.output) {
-          context.variables[task.output] = result;
-        }
-
-        context.results.push({
-          task: task.name,
-          output: result,
-          timestamp: Date.now(),
-        });
-
-        console.log(`✅ Completed: ${task.name}`);
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error(`❌ Error in task ${task.name}: ${errorMsg}`);
-
-        context.errors.push({
-          task: task.name,
-          error: errorMsg,
-          timestamp: Date.now(),
-        });
-
-        // Stop execution on error (could make this configurable)
-        throw new Error(`Agent execution failed at task: ${task.name}`);
+      if (iteration > 1) {
+        console.log(`\n🔄 Iteration ${iteration} - Continuing agent execution...\n`);
       }
+
+      // Execute all tasks
+      for (const task of workflow.tasks) {
+        try {
+          // Check condition if present
+          if (task.condition) {
+            const shouldExecute = this.evaluateCondition(task.condition, context);
+            if (!shouldExecute) {
+              console.log(`⏭️  Skipping task: ${task.name} (condition not met)`);
+              continue;
+            }
+          }
+
+          console.log(`▶️  Executing task: ${task.name}`);
+
+          let result: any;
+
+          // Execute based on task type
+          if (task.tool) {
+            // Execute a specific tool
+            result = await this.executeTool(task, context);
+          } else if (task.prompt && aiExecutor) {
+            // Execute AI prompt - resolve template variables first
+            const resolvedPrompt = this.resolvePrompt(task.prompt, context);
+            result = await aiExecutor(resolvedPrompt, context);
+
+            // Try to parse JSON responses (strip markdown code blocks if present)
+            result = this.parseAIResponse(result);
+          } else {
+            throw new Error(`Task ${task.name} has neither tool nor prompt specified`);
+          }
+
+          // Store result in variables if output is specified
+          if (task.output) {
+            context.variables[task.output] = result;
+          }
+
+          // Auto-accumulate batch results for iterative processing
+          // If this task outputs batch_result and has packages, accumulate them
+          if (task.output === 'batch_result' && result && typeof result === 'object') {
+            if (Array.isArray(result.packages)) {
+              // Initialize all_batches if not exists
+              if (!Array.isArray(context.variables.all_batches)) {
+                context.variables.all_batches = [];
+              }
+
+              // Append packages from this batch
+              context.variables.all_batches.push(...result.packages);
+
+              // Update total_analyzed counter
+              context.variables.total_analyzed = context.variables.all_batches.length;
+
+              console.log(`   📦 Accumulated ${result.packages.length} packages (total: ${context.variables.total_analyzed})`);
+            }
+          }
+
+          context.results.push({
+            task: task.name,
+            output: result,
+            timestamp: Date.now(),
+          });
+
+          console.log(`✅ Completed: ${task.name}`);
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          console.error(`❌ Error in task ${task.name}: ${errorMsg}`);
+
+          context.errors.push({
+            task: task.name,
+            error: errorMsg,
+            timestamp: Date.now(),
+          });
+
+          // Stop execution on error (could make this configurable)
+          throw new Error(`Agent execution failed at task: ${task.name}`);
+        }
+      }
+
+      // Check if agent decided to continue
+      const evaluation = context.variables.evaluation;
+      if (evaluation && typeof evaluation === 'object' && 'continue' in evaluation) {
+        if (evaluation.continue === true) {
+          console.log(`\n🔁 Agent decided to continue: ${evaluation.reason || 'No reason provided'}`);
+
+          // Update variables for next iteration from evaluation object
+          for (const [key, value] of Object.entries(evaluation)) {
+            if (key !== 'continue' && key !== 'reason') {
+              context.variables[key] = value;
+              if (key === 'next_offset') {
+                console.log(`   Updated offset: ${value}`);
+              }
+            }
+          }
+
+          // Continue to next iteration
+          continue;
+        } else {
+          console.log(`\n🛑 Agent decided to stop: ${evaluation.reason || 'Evaluation complete'}`);
+
+          // Update final variables from evaluation
+          for (const [key, value] of Object.entries(evaluation)) {
+            if (key !== 'continue' && key !== 'reason') {
+              context.variables[key] = value;
+            }
+          }
+
+          break;
+        }
+      }
+
+      // No evaluation found, exit after first iteration
+      break;
     }
 
-    console.log(`\n✨ Agent completed successfully\n`);
+    if (iteration >= maxIterations) {
+      console.log(`\n⚠️  Reached maximum iterations (${maxIterations})`);
+    }
+
+    console.log(`\n✨ Agent completed successfully after ${iteration} iteration(s)\n`);
     return context;
   }
 
