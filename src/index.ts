@@ -97,17 +97,24 @@ function formatPreview(text: string, limit: number = 1000): string {
   return `${truncated}\n... [truncated ${remaining} characters]`;
 }
 
-function logDebugMessage(title: string, details: string | Record<string, unknown>) {
+function logDebugMessage(
+  title: string,
+  displayDetails: string | Record<string, unknown>,
+  logDetails?: string | Record<string, unknown>
+) {
   if (!isDebugMode) return;
   const timestamp = new Date().toISOString();
-  const printable = typeof details === 'string' ? details : JSON.stringify(details, null, 2);
+  const printable = typeof displayDetails === 'string'
+    ? displayDetails
+    : JSON.stringify(displayDetails, null, 2);
   console.error(`\n=== DEBUG: ${title} @ ${timestamp} ===`);
   console.error(printable);
   console.error(`=== END DEBUG: ${title} ===`);
+  const serializedLogDetails = logDetails ?? displayDetails;
   debugLog({
     event: title,
     timestamp,
-    details,
+    details: serializedLogDetails,
   });
 }
 
@@ -226,16 +233,18 @@ Guidelines:
 - Do not ask follow-up questions; make the best effort with the provided data.
 - Never reference files or context that were not included in the current prompt.
 - If the stdin payload looks truncated, mention it.
+- Dont include headings or greetings; get straight to the point.
+- Dont summarize the input if not explicit told so; focus on the task at hand.
 `;
   agent.configureSession({
     systemPrompt: cliSystemPrompt,
     temperature: 0.15,
-    reasoningMode: 'low',
+    reasoningMode: 'high',
   });
 
   // Get query from arguments (filter out flags)
   const query = args.filter(a => !a.startsWith('--')).join(' ');
-  
+
   // Read from stdin if available
   let stdinContent = '';
   if (!process.stdin.isTTY) {
@@ -247,7 +256,7 @@ Guidelines:
   }
 
   // Combine query with stdin content
-  const fullQuery = stdinContent 
+  const fullQuery = stdinContent
     ? `${query}\n\nInput:\n${stdinContent}`
     : query || stdinContent;
 
@@ -260,7 +269,7 @@ Guidelines:
     logDebugMessage('Prompt Preview', [
       `Characters: ${fullQuery.length}`,
       formatPreview(fullQuery, 1500),
-    ].join('\n'));
+    ].join('\n'), fullQuery);
   }
 
   let streamedResponse = '';
@@ -271,13 +280,13 @@ Guidelines:
 
   const handleThinking = (step: ThinkingStep) => {
     if (!isDebugMode) return;
-    logDebugMessage('Agent Step', `[${step.type.toUpperCase()}] ${step.content}`);
+    logDebugMessage('Agent Step', `[${step.type.toUpperCase()}] ${step.content}`, step);
   };
 
   const handleToolUse = (tool: { name?: string; input?: any }) => {
     if (!isDebugMode) return;
     const inputPreview = tool?.input ? formatPreview(JSON.stringify(tool.input, null, 2), 600) : 'No input provided';
-    logDebugMessage('Tool Start', `Tool: ${tool?.name || 'unknown'}\nInput:\n${inputPreview}`);
+    logDebugMessage('Tool Start', `Tool: ${tool?.name || 'unknown'}\nInput:\n${inputPreview}`, tool);
   };
 
   const handleToolResult = (result: any) => {
@@ -285,7 +294,7 @@ Guidelines:
     const resultString = typeof result === 'string'
       ? result
       : JSON.stringify(result, null, 2);
-    logDebugMessage('Tool Result', formatPreview(resultString, 800));
+    logDebugMessage('Tool Result', formatPreview(resultString, 800), result);
   };
 
   // Run the agent and stream output
@@ -303,11 +312,33 @@ Guidelines:
       logDebugMessage('Response Preview', [
         `Characters: ${streamedResponse.length}`,
         formatPreview(streamedResponse, 1500),
-      ].join('\n'));
+      ].join('\n'), streamedResponse);
     }
     agent.dispose();
   } catch (error) {
-    console.error('Error:', error instanceof Error ? error.message : String(error));
+    const err = error as any;
+    const status = err?.status ?? err?.response?.status;
+    const statusText = err?.response?.statusText ?? err?.statusText;
+    const apiMessage = err?.response?.data?.error?.message || err?.error?.message || err?.message;
+    const displayStatus = status ? `HTTP ${status}${statusText ? ` ${statusText}` : ''}` : null;
+    const displayMessage = apiMessage || (error instanceof Error ? error.message : String(error));
+
+    if (status) {
+      console.error(`Error: API request failed (${displayStatus})`);
+    } else {
+      console.error('Error: Request failed');
+    }
+    console.error(`  → ${displayMessage}`);
+
+    if (isDebugMode) {
+      logDebugMessage('HTTP Error', displayMessage, {
+        status,
+        statusText,
+        message: displayMessage,
+        raw: err?.response?.data ?? err,
+      });
+    }
+
     process.exit(1);
   }
 }
@@ -343,7 +374,7 @@ async function runPluginCommand() {
 
       case 'list': {
         const plugins = await pluginManager.listInstalled();
-        
+
         if (plugins.length === 0) {
           console.log('No plugins installed.');
         } else {
@@ -434,7 +465,7 @@ async function runAgentCommand() {
 
       case 'list': {
         const agents = agentManager.listAgents();
-        
+
         if (agents.length === 0) {
           console.log('No agents installed.');
         } else {

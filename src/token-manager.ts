@@ -157,6 +157,28 @@ export class TokenManager {
     };
   }
 
+  getMaxTokens(): number {
+    return this.maxTokens;
+  }
+
+  getAvailableCompletionTokens(
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+    reserveTokens: number = 1024
+  ): number {
+    const used = this.countConversationTokens(messages);
+    const remaining = Math.max(0, this.maxTokens - used);
+
+    if (remaining === 0) {
+      return 32;
+    }
+
+    const reserve = Math.max(0, reserveTokens);
+    const preferred = remaining - reserve;
+    const completion = preferred > 0 ? preferred : Math.max(16, Math.floor(remaining * 0.5));
+
+    return Math.max(16, Math.min(remaining, completion));
+  }
+
   /**
    * Summarize conversation history to fit within token limits
    * Keeps recent messages and summarizes older ones

@@ -411,11 +411,14 @@ export class AIAgent {
       content: systemContent
     };
 
+    const promptMessages = [systemMessage, ...this.conversationHistory];
+    const completionTokens = this.tokenManager.getAvailableCompletionTokens(promptMessages, 2048);
+
     const response = await this.client.chat.completions.create({
       model: 'nhn-large:fast',
-      max_tokens: 2000,
+      max_tokens: completionTokens,
       temperature: this.sessionTemperature,
-      messages: [systemMessage, ...this.conversationHistory],
+      messages: promptMessages,
       stream: true,
     });
 
@@ -497,9 +500,11 @@ Please provide a comprehensive response to the user based on these results.`;
       }
     ];
 
+    const completionTokens = this.tokenManager.getAvailableCompletionTokens(messagesWithTaskContext, 2048);
+
     const response = await this.client.chat.completions.create({
       model: 'nhn-large:fast',
-      max_tokens: 4096,
+      max_tokens: completionTokens,
       temperature: this.sessionTemperature,
       messages: messagesWithTaskContext,
       stream: true,
