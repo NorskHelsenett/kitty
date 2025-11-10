@@ -566,12 +566,31 @@ const batchAnalyzeGitHubPackages: Tool = {
       }
 
       if (purls.length === 0) {
-        return JSON.stringify({
+        const emptyResult = {
           total_packages: 0,
           analyzed_count: 0,
-          packages: [],
+          offset,
+          next_offset: offset,
           has_more: false,
-        }, null, 2);
+          packages: [],
+          errors: [],
+          purl_stats: Object.keys(purlStats).length > 0 ? purlStats : undefined,
+          cache_stats: {
+            hits: 0,
+            misses: 0,
+            hit_rate_percent: 0,
+          },
+          summary: {
+            maintained: 0,
+            stale: 0,
+            unmaintained: 0,
+            archived: 0,
+            unknown: 0,
+          },
+        };
+
+        console.log(`\n🧾 Batch JSON Output:\n${JSON.stringify(emptyResult, null, 2)}\n`);
+        return emptyResult;
       }
 
       // Get batch of PURLs
@@ -716,7 +735,7 @@ const batchAnalyzeGitHubPackages: Tool = {
 
       console.log(`   📊 Cache stats: ${cacheHits} hits, ${cacheMisses} misses (${Math.round(cacheHits / (cacheHits + cacheMisses) * 100)}% hit rate)`);
 
-      return JSON.stringify({
+      const batchResult = {
         total_packages: purls.length,
         analyzed_count: packages.length,
         offset,
@@ -737,15 +756,23 @@ const batchAnalyzeGitHubPackages: Tool = {
           archived: packages.filter(p => p.status === 'archived').length,
           unknown: packages.filter(p => p.status === 'unknown').length,
         }
-      }, null, 2);
+      };
+
+      console.log(`\n🧾 Batch JSON Output:\n${JSON.stringify(batchResult, null, 2)}\n`);
+      return batchResult;
     } catch (error: any) {
-      return JSON.stringify({
+      const failureResult = {
         error: `Batch analysis failed: ${error.message}`,
         total_packages: 0,
         analyzed_count: 0,
+        offset: params.offset || 0,
+        next_offset: params.offset || 0,
         packages: [],
         has_more: false,
-      }, null, 2);
+      };
+
+      console.log(`\n🧾 Batch JSON Output:\n${JSON.stringify(failureResult, null, 2)}\n`);
+      return failureResult;
     }
   },
 };

@@ -9,7 +9,7 @@ export interface Tool {
   name: string;
   description: string;
   inputSchema: any;
-  execute: (params: any) => Promise<string>;
+  execute: (params: any) => Promise<any>;
 }
 
 // List directory contents

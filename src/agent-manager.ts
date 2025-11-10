@@ -237,6 +237,14 @@ export class AgentManager {
             throw new Error(`Task ${task.name} has neither tool nor prompt specified`);
           }
 
+          // Normalize tool results: attempt to parse JSON strings automatically
+          if (typeof result === 'string') {
+            const parsed = this.tryParseJSON(result);
+            if (parsed !== null) {
+              result = parsed;
+            }
+          }
+
           // Store result in variables if output is specified
           if (task.output) {
             context.variables[task.output] = result;
@@ -295,6 +303,7 @@ export class AgentManager {
               context.variables[key] = value;
               if (key === 'next_offset') {
                 console.log(`   Updated offset: ${value}`);
+                context.variables.current_offset = value;
               }
             }
           }
@@ -308,6 +317,9 @@ export class AgentManager {
           for (const [key, value] of Object.entries(evaluation)) {
             if (key !== 'continue' && key !== 'reason') {
               context.variables[key] = value;
+              if (key === 'next_offset') {
+                context.variables.current_offset = value;
+              }
             }
           }
 
@@ -462,6 +474,24 @@ export class AgentManager {
     } catch (e) {
       // Not JSON, return as string
       return response;
+    }
+  }
+
+  private tryParseJSON(data: string): any | null {
+    const trimmed = data.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const firstChar = trimmed[0];
+    if (firstChar !== '{' && firstChar !== '[' && trimmed !== 'null') {
+      return null;
+    }
+
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return null;
     }
   }
 
