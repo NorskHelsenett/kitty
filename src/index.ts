@@ -218,6 +218,20 @@ async function runNonInteractive() {
   // Use centralized config
   const agent = new AIAgent();
   await agent.initialize();
+  const cliSystemPrompt = `You are Kitty's non-interactive CLI assistant. Users call you from the shell with a short instruction plus an optional "Input:" block that contains raw text streamed over stdin. Your job is to analyze ONLY that combined instruction and input, then respond with fast, actionable output for the terminal.
+
+Guidelines:
+- Keep answers concise and scannable (bullets, short tables, explicit callouts).
+- Highlight items that match the user's filters or warnings (e.g., deprecated/archived repos).
+- Do not ask follow-up questions; make the best effort with the provided data.
+- Never reference files or context that were not included in the current prompt.
+- If the stdin payload looks truncated, mention it.
+`;
+  agent.configureSession({
+    systemPrompt: cliSystemPrompt,
+    temperature: 0.15,
+    reasoningMode: 'low',
+  });
 
   // Get query from arguments (filter out flags)
   const query = args.filter(a => !a.startsWith('--')).join(' ');

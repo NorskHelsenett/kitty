@@ -1,6 +1,8 @@
 import OpenAI from 'openai';
 import { config, getDefaultModel } from './config.js';
 
+export type ReasoningMode = 'low' | 'medium' | 'high';
+
 export interface ThinkingStep {
   type: 'planning' | 'reflection' | 'decision';
   content: string;
@@ -27,6 +29,7 @@ export interface OrchestratorResult {
 export class Orchestrator {
   private client: OpenAI;
   private modelName: string;
+  private reasoningMode: ReasoningMode = 'high';
 
   constructor(apiKey?: string, baseURL?: string) {
     const url = baseURL || config.getBaseURL();
@@ -37,6 +40,10 @@ export class Orchestrator {
       baseURL: url,
     });
     this.modelName = getDefaultModel();
+  }
+
+  setReasoningMode(mode: ReasoningMode) {
+    this.reasoningMode = mode;
   }
 
   /**
@@ -53,7 +60,7 @@ export class Orchestrator {
     const toolsList = availableTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
 
     const systemPrompt = `
-Reasoning: high
+Reasoning: ${this.reasoningMode}
 You are an AI task analyzer. Your job is to determine if a user's request requires complex task planning or can be answered directly.
 
 Available tools that can help with complex tasks:
@@ -108,7 +115,7 @@ Respond with JSON only: { "shouldPlan": boolean, "reasoning": "brief explanation
     const toolsList = availableTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
 
     const systemPrompt = `
-Reasoning: high
+Reasoning: ${this.reasoningMode}
 You are an AI task planner. Break down the user's request into concrete, sequential tasks.
 
 Available tools (USE THESE when possible):
@@ -310,8 +317,8 @@ Example for "explain this repo":
     const toolsList = availableTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
 
     const systemPrompt = `
-    Reasoning: high
-    You are an AI task evaluator. Analyze whether tasks successfully fulfilled the user's request.
+Reasoning: ${this.reasoningMode}
+You are an AI task evaluator. Analyze whether tasks successfully fulfilled the user's request.
 
 Available tools for corrective actions:
 ${toolsList}

@@ -1,12 +1,18 @@
 import OpenAI from 'openai';
 import { getTools } from './tools/index.js';
 import { executeTool, registerCustomTool } from './tools/executor.js';
-import { Orchestrator, ThinkingStep, Task } from './orchestrator.js';
+import { Orchestrator, ThinkingStep, Task, type ReasoningMode } from './orchestrator.js';
 import { ProjectContext, loadProjectContext, buildSystemMessageWithContext } from './project-context.js';
 import { TokenManager, TokenUsage } from './token-manager.js';
 import { PluginManager } from './plugin-manager.js';
 import { AgentManager } from './agent-manager.js';
 import { config, getDefaultModel } from './config.js';
+
+interface AgentSessionOptions {
+  systemPrompt?: string;
+  temperature?: number;
+  reasoningMode?: ReasoningMode;
+}
 
 export class AIAgent {
   private client: OpenAI;
@@ -17,6 +23,9 @@ export class AIAgent {
   private modelName: string;
   private pluginManager: PluginManager;
   private agentManager: AgentManager;
+  private sessionSystemPrompt?: string;
+  private sessionTemperature?: number;
+  private reasoningMode: ReasoningMode = 'high';
 
   constructor(apiKey?: string, baseURL?: string) {
     // Use centralized config if not provided
@@ -28,6 +37,7 @@ export class AIAgent {
       baseURL: url,
     });
     this.orchestrator = new Orchestrator(key, url);
+    this.orchestrator.setReasoningMode(this.reasoningMode);
 
     // Use default model from config
     this.modelName = getDefaultModel();
@@ -89,6 +99,27 @@ export class AIAgent {
 
   getTokenManager(): TokenManager {
     return this.tokenManager;
+  }
+
+  configureSession(options: AgentSessionOptions): void {
+    if (options.systemPrompt !== undefined) {
+      this.sessionSystemPrompt = options.systemPrompt;
+    }
+    if (options.temperature !== undefined) {
+      this.sessionTemperature = options.temperature;
+    }
+    if (options.reasoningMode) {
+      this.reasoningMode = options.reasoningMode;
+      this.orchestrator.setReasoningMode(options.reasoningMode);
+    }
+  }
+
+  private buildSystemPrompt(basePrompt: string): string {
+    if (!this.sessionSystemPrompt) {
+      return basePrompt;
+    }
+    const trimmedSessionPrompt = this.sessionSystemPrompt.trim();
+    return `${trimmedSessionPrompt}\n\n${basePrompt}`;
   }
 
   /**
@@ -370,9 +401,10 @@ export class AIAgent {
     onTextChunk?: (text: string) => void
   ): Promise<void> {
     const baseSystemMessage = 'You are a helpful AI assistant. Format responses using Markdown. Keep responses concise and clear.';
+    const sessionAwareBase = this.buildSystemPrompt(baseSystemMessage);
     const systemContent = this.projectContext
-      ? buildSystemMessageWithContext(this.projectContext, baseSystemMessage)
-      : baseSystemMessage;
+      ? buildSystemMessageWithContext(this.projectContext, sessionAwareBase)
+      : sessionAwareBase;
 
     const systemMessage = {
       role: 'system' as const,
@@ -382,6 +414,7 @@ export class AIAgent {
     const response = await this.client.chat.completions.create({
       model: 'nhn-large:fast',
       max_tokens: 2000,
+      temperature: this.sessionTemperature,
       messages: [systemMessage, ...this.conversationHistory],
       stream: true,
     });
@@ -437,10 +470,10 @@ IMPORTANT:
 - If a file was written successfully (write_file task succeeded), do NOT output the file content in your response
 - Just confirm what was created, e.g., "I've created KITTY.md with project documentation including overview, commands, and coding rules."
 - Focus on what was accomplished, not reproducing file contents`;
-
+    const sessionAwareBase = this.buildSystemPrompt(baseSystemMessage);
     const systemContent = this.projectContext
-      ? buildSystemMessageWithContext(this.projectContext, baseSystemMessage)
-      : baseSystemMessage;
+      ? buildSystemMessageWithContext(this.projectContext, sessionAwareBase)
+      : sessionAwareBase;
 
     const systemMessage = {
       role: 'system' as const,
@@ -467,6 +500,7 @@ Please provide a comprehensive response to the user based on these results.`;
     const response = await this.client.chat.completions.create({
       model: 'nhn-large:fast',
       max_tokens: 4096,
+      temperature: this.sessionTemperature,
       messages: messagesWithTaskContext,
       stream: true,
     });
