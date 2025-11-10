@@ -11,6 +11,7 @@ import * as path from 'path';
 import { executeTool as runExecutorTool } from './tools/executor.js';
 import { builtInTools } from './tools/index.js';
 import { tools as sbomTools } from './tools/sbom-tools.js';
+import type { ThinkingStep } from './orchestrator.js';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -86,6 +87,28 @@ function debugLog(data: any) {
     const logEntry = `[${timestamp}] ${JSON.stringify(data, null, 2)}\n`;
     fs.appendFileSync(debugFile, logEntry);
   }
+}
+
+function formatPreview(text: string, limit: number = 1000): string {
+  if (!text) return '[empty]';
+  if (text.length <= limit) return text;
+  const truncated = text.slice(0, limit);
+  const remaining = text.length - limit;
+  return `${truncated}\n... [truncated ${remaining} characters]`;
+}
+
+function logDebugMessage(title: string, details: string | Record<string, unknown>) {
+  if (!isDebugMode) return;
+  const timestamp = new Date().toISOString();
+  const printable = typeof details === 'string' ? details : JSON.stringify(details, null, 2);
+  console.error(`\n=== DEBUG: ${title} @ ${timestamp} ===`);
+  console.error(printable);
+  console.error(`=== END DEBUG: ${title} ===`);
+  debugLog({
+    event: title,
+    timestamp,
+    details,
+  });
 }
 
 function inferFileVariableName(workflow?: AgentWorkflow | null): string | null {
@@ -219,17 +242,55 @@ async function runNonInteractive() {
     process.exit(1);
   }
 
+  if (isDebugMode) {
+    logDebugMessage('Prompt Preview', [
+      `Characters: ${fullQuery.length}`,
+      formatPreview(fullQuery, 1500),
+    ].join('\n'));
+  }
+
+  let streamedResponse = '';
+  const handleTextChunk = (text: string) => {
+    streamedResponse += text;
+    process.stdout.write(text);
+  };
+
+  const handleThinking = (step: ThinkingStep) => {
+    if (!isDebugMode) return;
+    logDebugMessage('Agent Step', `[${step.type.toUpperCase()}] ${step.content}`);
+  };
+
+  const handleToolUse = (tool: { name?: string; input?: any }) => {
+    if (!isDebugMode) return;
+    const inputPreview = tool?.input ? formatPreview(JSON.stringify(tool.input, null, 2), 600) : 'No input provided';
+    logDebugMessage('Tool Start', `Tool: ${tool?.name || 'unknown'}\nInput:\n${inputPreview}`);
+  };
+
+  const handleToolResult = (result: any) => {
+    if (!isDebugMode) return;
+    const resultString = typeof result === 'string'
+      ? result
+      : JSON.stringify(result, null, 2);
+    logDebugMessage('Tool Result', formatPreview(resultString, 800));
+  };
+
   // Run the agent and stream output
   try {
     await agent.chat(
       fullQuery,
-      (text) => process.stdout.write(text), // Stream text chunks
-      undefined, // onToolUse
-      undefined, // onToolResult
+      handleTextChunk,
+      handleToolUse,
+      handleToolResult,
       undefined, // onWaitingForResponse
-      undefined  // onThinking
+      handleThinking
     );
     console.log(); // Final newline
+    if (isDebugMode) {
+      logDebugMessage('Response Preview', [
+        `Characters: ${streamedResponse.length}`,
+        formatPreview(streamedResponse, 1500),
+      ].join('\n'));
+    }
     agent.dispose();
   } catch (error) {
     console.error('Error:', error instanceof Error ? error.message : String(error));
