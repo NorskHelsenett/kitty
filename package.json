@@ -1,0 +1,69 @@
+{
+  "name": "@norskhelsenett/kitty",
+  "version": "0.0.1",
+  "description": "Beautiful TUI terminal AI chat client with agent capabilities",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "kitty": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NorskHelsenett/kitty"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "scripts": {
+    "dev": "node dist/index.js",
+    "build": "tsc",
+    "build:release": "bash scripts/build-release.sh",
+    "start": "node dist/index.js",
+    "repl": "ts-node examples/repl.ts",
+    "demo": "ts-node examples/simple-cli.ts",
+    "demo:agent": "ts-node examples/agent-demo.ts",
+    "test:orchestrator": "ts-node test-orchestrator.ts",
+    "test:external-code": "ts-node test-external-code.ts",
+    "plugin:list": "ts-node src/index.ts plugin list",
+    "plugin:install": "ts-node src/index.ts plugin install",
+    "agent:demo": "ts-node examples/agent-demo.ts",
+    "install:global": "./install-global.sh",
+    "version:patch": "npm version patch",
+    "version:minor": "npm version minor",
+    "version:major": "npm version major"
+  },
+  "keywords": [
+    "ai",
+    "chat",
+    "tui",
+    "terminal",
+    "agent",
+    "kitty"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "highlight.js": "^11.11.1",
+    "ink": "^6.4.0",
+    "ink-text-input": "^6.0.0",
+    "js-tiktoken": "^1.0.21",
+    "js-yaml": "^4.1.0",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0",
+    "openai": "^6.8.1",
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/marked-terminal": "^6.1.1",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "react-devtools-core": "^6.1.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

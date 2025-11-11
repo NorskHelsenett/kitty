@@ -1,0 +1,12 @@
+{
+  "manifest": {
+    "name": "weather",
+    "version": "1.0.0",
+    "description": "Get weather information for any city using wttr.in service",
+    "author": "Kitty Team",
+    "homepage": "https://github.com/kitty/plugins",
+    "license": "MIT",
+    "main": "index.js"
+  },
+  "code": "/**\n * Weather Plugin for Kitty\n * \n * This plugin provides a simple weather lookup tool using the wttr.in service.\n * It demonstrates:\n * - Basic tool structure\n * - Making HTTP requests\n * - Parameter validation\n * - Error handling\n */\n\nexport const tools = [\n  {\n    name: 'get_weather',\n    description: 'Get current weather information for a city. Returns temperature, conditions, and forecast. Use this when users ask about weather, temperature, or climate conditions.',\n    inputSchema: {\n      type: 'object',\n      properties: {\n        city: {\n          type: 'string',\n          description: 'City name (e.g., \"London\", \"New York\", \"Tokyo\"). Can include country code for accuracy (e.g., \"London,UK\")'\n        },\n        format: {\n          type: 'string',\n          description: 'Output format: \"short\" for one-line summary, \"detailed\" for full forecast',\n          enum: ['short', 'detailed'],\n          default: 'short'\n        }\n      },\n      required: ['city']\n    },\n    execute: async (params) => {\n      try {\n        // Validate input\n        if (!params.city || typeof params.city !== 'string') {\n          return 'Error: City name is required and must be a string';\n        }\n\n        // Build URL based on format preference\n        const format = params.format === 'detailed' ? '' : '?format=3';\n        const url = `https://wttr.in/${encodeURIComponent(params.city)}${format}`;\n        \n        // Fetch weather data\n        const response = await fetch(url, {\n          headers: {\n            'User-Agent': 'curl/7.68.0' // wttr.in works best with curl user agent\n          }\n        });\n        \n        if (!response.ok) {\n          return `Error: Failed to fetch weather data (HTTP ${response.status})`;\n        }\n        \n        const text = await response.text();\n        \n        // Check if the response indicates an error\n        if (text.includes('Unknown location')) {\n          return `Error: Unknown location \"${params.city}\". Please check the city name and try again.`;\n        }\n        \n        return text.trim();\n      } catch (error) {\n        return `Error fetching weather: ${error.message}`;\n      }\n    }\n  }\n];"
+}

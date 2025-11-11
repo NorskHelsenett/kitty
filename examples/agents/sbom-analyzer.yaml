@@ -1,0 +1,145 @@
+name: sbom-analyzer
+version: 1.0.0
+description: |
+  Analyzes Software Bill of Materials (SBOM) files to extract package information,
+  verify repository status, and check for unmaintained dependencies.
+
+  Efficiently processes large SBOMs with hundreds of packages in batches.
+
+author: Kitty Team
+license: MIT
+
+variables:
+  sbom_file: ""
+  output_format: "markdown"
+  current_offset: 0
+  batch_size: 50
+  all_batches: []
+  total_analyzed: 0
+
+tasks:
+  - name: analyze_batch
+    description: Analyze a batch of GitHub packages from SBOM
+    tool: batch_analyze_github_packages
+    input:
+      file_path: "${sbom_file}"
+      batch_size: ${batch_size}
+      offset: ${current_offset}
+    output: batch_result
+
+  - name: evaluate_progress
+    description: Decide if we need to continue
+    prompt: |
+      Based on the batch result, determine if we should continue processing more batches.
+
+      has_more flag: ${batch_result.has_more}
+      next_offset: ${batch_result.next_offset}
+
+      If has_more is true, return:
+      {"continue": true, "next_offset": ${batch_result.next_offset}, "reason": "More packages to process"}
+
+      If has_more is false, return:
+      {"continue": false, "reason": "All packages processed"}
+
+      Return ONLY the JSON object, no markdown or code blocks.
+    output: evaluation
+
+  - name: generate_report
+    description: Generate final comprehensive SBOM security report
+    prompt: |
+      Generate a comprehensive SBOM security report using ONLY the JSON dataset below.
+      The dataset already aggregates every analyzed package, status counts, license data,
+      curated lists (unmaintained, archived, stale, high-star, no-license), and the top 10 popular packages.
+
+      DATASET (JSON):
+      ${report_data}
+
+      Format the final answer exactly as markdown with the following sections:
+
+      # SBOM Security Analysis Report
+      *Generated: <current date and time>*
+
+      ## Executive Summary
+      - **Total GitHub packages found**: metadata.total_github_packages
+      - **Successfully analyzed**: metadata.total_analyzed
+      - **Failed/Unknown**: metadata.failed_or_unknown
+
+      ## Package Statistics
+
+      ### By Package Type (from SBOM)
+      Use metadata.purl_stats to create table:
+      | Type | Count | Description |
+      |------|-------|-------------|
+      | golang | X | Go modules |
+      | npm | X | JavaScript packages |
+      | apk | X | Alpine packages |
+      | pypi | X | Python packages |
+      | maven | X | Java packages |
+      | ... | ... | ... |
+
+      ### By Maintenance Status
+      Use status.counts and status.percentages to populate:
+      | Status | Count | Percentage |
+      |--------|-------|------------|
+      | ✅ Maintained | status.counts.maintained | status.percentages.maintained% |
+      | ⚠️ Stale (6-12mo) | status.counts.stale | status.percentages.stale% |
+      | ❌ Unmaintained (12+mo) | status.counts.unmaintained | status.percentages.unmaintained% |
+      | 🗄️ Archived | status.counts.archived | status.percentages.archived% |
+      | ❓ Unknown/Error | status.counts.unknown | status.percentages.unknown% |
+
+      ### By License
+      Use licenses.top (already sorted) to populate:
+      | License | Count |
+      |---------|-------|
+      | MIT | ... |
+      | Apache-2.0 | ... |
+      | ... | ... |
+
+      ## ⚠️ Non-Active Projects
+
+      ### Unmaintained Packages (12+ months without updates)
+      Use groups.unmaintained.items (note total for overall count) to create table:
+      | Package | Version | Last Commit | Stars | Status |
+      |---------|---------|-------------|-------|--------|
+      | [owner/repo](github_url) | version | SHA (date) | ⭐ count | months_since_last_commit months ago |
+      Mention if only a subset is shown (groups.unmaintained.total total items).
+
+      ### Archived Packages
+      Use groups.archived.items (and note total) to create table:
+      | Package | Version | Last Commit | Stars |
+      |---------|---------|-------------|-------|
+      | [owner/repo](github_url) | version | SHA (date) | ⭐ count |
+
+      ### Stale Packages (6-12 months without updates)
+      Use groups.stale.items (and note total) to create table:
+      | Package | Version | Last Commit | Stars |
+      |---------|---------|-------------|-------|
+      | [owner/repo](github_url) | version | SHA (date) | ⭐ count |
+
+      ## Top 10 Most Popular Packages
+      Use popular.top_10 (already sorted):
+      | Rank | Package | Stars | Status | Last Update |
+      |------|---------|-------|--------|-------------|
+      | 1 | [owner/repo](github_url) | ⭐ count | status | date |
+
+      ## Security Recommendations
+
+      ### 🔴 Critical (Immediate Action Required)
+      Use groups.archived.items and groups.unmaintained_high_star.items to list:
+      - All archived packages (need replacement)
+      - Unmaintained packages with >1000 stars (high-usage dependencies at risk)
+
+      ### 🟡 Warning (Monitor Closely)
+      Use groups.stale.items and groups.no_license.items to list:
+      - Stale packages (6-12 months old) approaching unmaintained status
+      - Packages with no license information
+
+      ### 🟢 Good
+      Use status.percentages.maintained and groups.maintained_high_star.items:
+      - X% of packages are actively maintained (<6 months)
+      - Highlight well-maintained critical dependencies (high stars + maintained status)
+
+      ## Overall Risk Assessment
+      - **Risk Level**: Low/Medium/High (calculate based on the dataset)
+      - **Justification**: Use counts of unmaintained/archived packages and percentage of unknowns
+    output: report

@@ -1,0 +1,132 @@
+manifest:
+  name: calculator
+  version: 1.0.0
+  description: Advanced calculator with support for various mathematical operations
+  author: Kitty Team
+  license: MIT
+  main: index.js
+
+code: |
+  /**
+   * Calculator Plugin for Kitty
+   * 
+   * Provides mathematical calculation capabilities.
+   * WARNING: This uses eval() for simplicity - in production,
+   * use a proper math expression parser like math.js
+   */
+
+  export const tools = [
+    {
+      name: 'calculate',
+      description: 'Perform mathematical calculations. Supports basic arithmetic (+, -, *, /), exponents (**), modulo (%), and parentheses. Use this when users need to compute mathematical expressions.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          expression: {
+            type: 'string',
+            description: 'Mathematical expression to evaluate (e.g., "2 + 2", "(10 * 5) / 2", "2 ** 8")'
+          }
+        },
+        required: ['expression']
+      },
+      execute: async (params) => {
+        try {
+          // Validate input
+          if (!params.expression || typeof params.expression !== 'string') {
+            return 'Error: Expression is required and must be a string';
+          }
+
+          // Basic security: only allow numbers, operators, and parentheses
+          const allowedChars = /^[0-9+\-*/.()\s%]+$/;
+          if (!allowedChars.test(params.expression)) {
+            return 'Error: Expression contains invalid characters. Only numbers and operators (+, -, *, /, %, **, .) are allowed.';
+          }
+
+          // Evaluate the expression
+          // NOTE: In production, use a proper math parser library
+          const result = eval(params.expression);
+          
+          // Check for invalid results
+          if (result === Infinity) {
+            return 'Error: Result is infinity (division by zero?)';
+          }
+          if (isNaN(result)) {
+            return 'Error: Result is not a number. Check your expression.';
+          }
+          
+          return `${params.expression} = ${result}`;
+        } catch (error) {
+          return `Error evaluating expression: ${error.message}`;
+        }
+      }
+    },
+    {
+      name: 'convert_units',
+      description: 'Convert between common units (temperature, distance, weight). Use when users need unit conversions.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          value: {
+            type: 'number',
+            description: 'The value to convert'
+          },
+          from_unit: {
+            type: 'string',
+            description: 'Source unit',
+            enum: ['celsius', 'fahrenheit', 'kelvin', 'meters', 'feet', 'miles', 'kilometers', 'kg', 'lbs']
+          },
+          to_unit: {
+            type: 'string',
+            description: 'Target unit',
+            enum: ['celsius', 'fahrenheit', 'kelvin', 'meters', 'feet', 'miles', 'kilometers', 'kg', 'lbs']
+          }
+        },
+        required: ['value', 'from_unit', 'to_unit']
+      },
+      execute: async (params) => {
+        try {
+          const { value, from_unit, to_unit } = params;
+          
+          // Temperature conversions
+          if (from_unit === 'celsius' && to_unit === 'fahrenheit') {
+            return `${value}°C = ${(value * 9/5 + 32).toFixed(2)}°F`;
+          }
+          if (from_unit === 'fahrenheit' && to_unit === 'celsius') {
+            return `${value}°F = ${((value - 32) * 5/9).toFixed(2)}°C`;
+          }
+          if (from_unit === 'celsius' && to_unit === 'kelvin') {
+            return `${value}°C = ${(value + 273.15).toFixed(2)}K`;
+          }
+          if (from_unit === 'kelvin' && to_unit === 'celsius') {
+            return `${value}K = ${(value - 273.15).toFixed(2)}°C`;
+          }
+          
+          // Distance conversions
+          if (from_unit === 'meters' && to_unit === 'feet') {
+            return `${value}m = ${(value * 3.28084).toFixed(2)}ft`;
+          }
+          if (from_unit === 'feet' && to_unit === 'meters') {
+            return `${value}ft = ${(value / 3.28084).toFixed(2)}m`;
+          }
+          if (from_unit === 'kilometers' && to_unit === 'miles') {
+            return `${value}km = ${(value * 0.621371).toFixed(2)}mi`;
+          }
+          if (from_unit === 'miles' && to_unit === 'kilometers') {
+            return `${value}mi = ${(value / 0.621371).toFixed(2)}km`;
+          }
+          
+          // Weight conversions
+          if (from_unit === 'kg' && to_unit === 'lbs') {
+            return `${value}kg = ${(value * 2.20462).toFixed(2)}lbs`;
+          }
+          if (from_unit === 'lbs' && to_unit === 'kg') {
+            return `${value}lbs = ${(value / 2.20462).toFixed(2)}kg`;
+          }
+          
+          return `Error: Cannot convert from ${from_unit} to ${to_unit}`;
+        } catch (error) {
+          return `Error converting units: ${error.message}`;
+        }
+      }
+    }
+  ];

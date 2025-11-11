@@ -1,0 +1,44 @@
+name: advanced-analyzer
+version: 1.0.0
+description: Advanced code analyzer using a powerful model for deep analysis
+author: Kitty Team
+license: MIT
+
+# Model configuration - this agent uses a more powerful model
+model:
+  name: nhn-large:slow  # Use a larger, slower model for better analysis
+  maxTokens: 4096      # Allow longer responses
+  temperature: 0.3     # Lower temperature for more focused analysis
+  # Optional: Use a different API endpoint or key
+  # baseURL: "https://api.openai.com/v1"
+  # apiKey: "sk-your-custom-key"
+
+tasks:
+  - name: list-code-files
+    description: Find all source code files
+    tool: search_files
+    input:
+      pattern: "\\.(ts|js|tsx|jsx|py|java|go|rs)$"
+      path: "."
+      search_type: "filename"
+      use_regex: true
+    output: code_files
+
+  - name: analyze-complexity
+    description: Analyze code complexity and patterns
+    prompt: |
+      Based on the code files found, analyze:
+      1. Overall code complexity
+      2. Common patterns used
+      3. Potential improvements
+      4. Architecture insights
+      
+      Files found: ${code_files}
+    output: analysis
+
+  - name: generate-report
+    description: Create a detailed analysis report
+    tool: write_file
+    input:
+      path: "CODE_ANALYSIS.md"
+      content: ${analysis}

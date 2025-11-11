@@ -1,0 +1,43 @@
+name: dependency-checker
+version: 1.0.0
+description: |
+  Simple agent that checks if npm packages are up to date.
+  Demonstrates basic agent workflow with multiple steps.
+
+author: Kitty Team
+license: MIT
+
+variables:
+  package_name: "express"
+
+tasks:
+  - name: fetch_package_info
+    description: Fetch package metadata from npm registry
+    tool: fetch_package_metadata
+    input:
+      ecosystem: "npm"
+      package_name: "${package_name}"
+    output: package_info
+
+  - name: parse_metadata
+    description: Parse and format the package information
+    prompt: |
+      Parse the following package metadata and create a summary:
+      ${package_info}
+      
+      Include:
+      - Package name and latest version
+      - Repository URL
+      - License
+      - Brief description
+      
+      Format as a concise text report.
+    output: summary
+
+  - name: check_repository
+    description: Check if the package repository is accessible
+    condition: package_info exists
+    tool: check_repo_maintenance
+    input:
+      repo_url: "${repository_url}"
+    output: repo_status

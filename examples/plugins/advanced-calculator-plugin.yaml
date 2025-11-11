@@ -1,0 +1,12 @@
+manifest:
+  name: advanced-calculator
+  version: 1.0.0
+  description: |
+    Advanced calculator with statistics and matrix operations.
+    This plugin uses an external code file for easier maintenance.
+  author: Kitty Team
+  license: MIT
+  main: index.js
+
+# Reference external code file instead of inline code
+codeFile: ./advanced-calculator.js

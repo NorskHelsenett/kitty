@@ -1,0 +1,13 @@
+{
+  "name": "github-plugin",
+  "version": "1.0.0",
+  "description": "GitHub API integration plugin",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --target node --format esm"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}
