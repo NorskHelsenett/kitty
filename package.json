@@ -1,6 +1,6 @@
 {
   "name": "kitty",
-  "version": "v0.1.0",
+  "version": "0.2.0",
   "description": "Beautiful TUI terminal AI chat client with agent capabilities",
   "type": "module",
   "main": "dist/index.js",
