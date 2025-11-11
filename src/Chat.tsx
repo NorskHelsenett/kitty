@@ -21,7 +21,7 @@ marked.use(markedTerminal({
 
 interface Message {
   id: string;
-  role: 'user' | 'assistant' | 'system' | 'thinking';
+  role: 'user' | 'assistant' | 'system' | 'thinking' | 'none';
   content: string;
   timestamp: number;
   thinkingType?: 'planning' | 'reflection' | 'decision';
@@ -58,6 +58,10 @@ const messagesReducer = (state: Message[], action: MessageAction): Message[] => 
 
 // Memoized message component to prevent re-rendering on input changes
 const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: boolean }) => {
+  if (msg.role === 'none') {
+    return <Text>{msg.content}</Text>;
+  }
+
   const content = msg.content || '';
   const isThinking = msg.role === 'thinking';
   const color = msg.role === 'user' ? 'cyan' :
@@ -92,15 +96,15 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [messages, dispatch] = useReducer(messagesReducer, [
     {
       id: 'header',
-      role: 'assistant',
-      content: `$$\\   $$\\ $$$$$$\\ $$$$$$$$\\ $$$$$$$$\\ $$\\     $$\\ 
-$$ | $$  |\\_$$  _|\\__$$  __|\\__$$  __|\\$$\\   $$  |
-$$ |$$  /   $$ |     $$ |      $$ |    \\$$\\ $$  / 
-$$$$$  /    $$ |     $$ |      $$ |     \\$$$$  /  
-$$  $$<     $$ |     $$ |      $$ |      \\$$  /   
-$$ |\\$$\\    $$ |     $$ |      $$ |       $$ |    
-$$ | \\$$\\ $$$$$$\\    $$ |      $$ |       $$ |    
-\\__|  \\__|\\______|   \\__|      \\__|       \\__|    
+      role: 'none',
+      content: `
+██╗  ██╗██╗████████╗████████╗██╗   ██╗
+██║ ██╔╝██║╚══██╔══╝╚══██╔══╝╚██╗ ██╔╝
+█████╔╝ ██║   ██║      ██║    ╚████╔╝ 
+██╔═██╗ ██║   ██║      ██║     ╚██╔╝  
+██║  ██╗██║   ██║      ██║      ██║   
+╚═╝  ╚═╝╚═╝   ╚═╝      ╚═╝      ╚═╝   
+Welcome to KITTY - Your AI-powered assistant!  
                                                   
                                                   
                                                   `,
