@@ -39,17 +39,17 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
   const content = msg.content || '';
   const isThinking = msg.role === 'thinking';
   const color = msg.role === 'user' ? 'cyan' :
-               msg.role === 'assistant' ? 'green' :
-               msg.role === 'thinking' ? 'gray' :
-               'yellow';
+    msg.role === 'assistant' ? 'green' :
+      msg.role === 'thinking' ? 'gray' :
+        'yellow';
   const prefix = msg.role === 'user' ? '› ' :
-                msg.role === 'assistant' ? '● ' :
-                msg.role === 'thinking' ? '○○○ ' :
-                '• ';
+    msg.role === 'assistant' ? '● ' :
+      msg.role === 'thinking' ? '○○○ ' :
+        '• ';
   const label = msg.role === 'user' ? 'You' :
-               msg.role === 'assistant' ? 'KITTY' :
-               msg.role === 'thinking' ? `Thinking (${msg.thinkingType || 'processing'})` :
-               'System';
+    msg.role === 'assistant' ? 'KITTY' :
+      msg.role === 'thinking' ? `Thinking (${msg.thinkingType || 'processing'})` :
+        'System';
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -286,404 +286,549 @@ Ctrl+C (twice) - Exit application`);
     }
   }, [agent, addMessage, setMessages]);
 
-    const handleSubmit = useCallback(async (value: string) => {
+  const handleSubmit = useCallback(async (value: string) => {
 
-      const trimmed = value.trim();
+    const trimmed = value.trim();
 
-      if (!trimmed || isProcessing) return;
+    if (!trimmed || isProcessing) return;
 
-  
 
-      // Clear input immediately
 
-      setInput('');
+    // Clear input immediately
 
-  
+    setInput('');
 
-      setIsProcessing(true);
 
-      streamStartTime.current = Date.now();
 
-      streamTokenCount.current = 0;
+    setIsProcessing(true);
 
-  
+    streamStartTime.current = Date.now();
 
-      addMessage('user', trimmed);
+    streamTokenCount.current = 0;
 
-      logToFile(`USER: ${trimmed}`);
 
-  
 
-      // Handle slash commands
+    addMessage('user', trimmed);
 
-      if (trimmed.startsWith('/')) {
+    logToFile(`USER: ${trimmed}`);
 
-        await handleCommand(trimmed);
 
-        setIsProcessing(false);
 
-        return;
+    // Handle slash commands
 
-      }
+    if (trimmed.startsWith('/')) {
 
-  
+      await handleCommand(trimmed);
 
-      try {
+      setIsProcessing(false);
 
-        let fullResponse = '';
+      return;
 
-        let assistantMessageAdded = false;
+    }
 
-        let currentTaskId: string | null = null;
 
-  
 
-        abortControllerRef.current = new AbortController();
+    try {
 
-  
+      let fullResponse = '';
 
-        await agent.chat(
+      let assistantMessageAdded = false;
 
-          trimmed,
+      let currentTaskId: string | null = null;
 
-          // Text streaming callback
 
-          (text: string) => {
 
-            fullResponse += text;
+      abortControllerRef.current = new AbortController();
 
-            logToFile(`STREAM_CHUNK: +${text.length} chars, total=${fullResponse.length}`);
 
-  
 
-            if (!assistantMessageAdded) {
+      await agent.chat(
 
-              logToFile(`ASSISTANT_FIRST_MSG: Creating assistant message with ${fullResponse.length} chars`);
+        trimmed,
 
-              addMessage('assistant', fullResponse);
+        // Text streaming callback
 
-              assistantMessageAdded = true;
+        (text: string) => {
 
-            } else {
+          fullResponse += text;
 
-              updateLastMessage(fullResponse);
+          logToFile(`STREAM_CHUNK: +${text.length} chars, total=${fullResponse.length}`);
 
-            }
 
-          },
 
-          // Tool call callback
+          if (!assistantMessageAdded) {
 
-          (tool: any) => {
+            logToFile(`ASSISTANT_FIRST_MSG: Creating assistant message with ${fullResponse.length} chars`);
 
-            const taskDesc = `${tool.name}${tool.input?.path ? `: ${tool.input.path}` : ''}`;
+            addMessage('assistant', fullResponse);
 
-            currentTaskId = addTask(taskDesc);
+            assistantMessageAdded = true;
 
-          },
+          } else {
 
-          // Tool result callback
-
-          (result: any) => {
-
-            if (currentTaskId) {
-
-              completeTask(currentTaskId);
-
-              currentTaskId = null;
-
-            }
-
-          },
-
-          // Waiting callback
-
-          () => {},
-
-          // Thinking callback
-
-          (step: any) => {
-
-            if (step && step.content) {
-
-              logToFile(`THINKING: type=${step.type}, content="${step.content.substring(0, 100)}"`);
-
-              addMessage('thinking', step.content, step.type);
-
-            }
+            updateLastMessage(fullResponse);
 
           }
 
-        );
+        },
 
-  
+        // Tool call callback
 
-        // If no response was received, show a message
+        (tool: any) => {
 
-        if (!assistantMessageAdded) {
+          const taskDesc = `${tool.name}${tool.input?.path ? `: ${tool.input.path}` : ''}`;
 
-          logToFile('CHAT_COMPLETE: No response was received from AI');
+          currentTaskId = addTask(taskDesc);
 
-          addMessage('system', 'No response received from AI');
+        },
 
-        } else {
+        // Tool result callback
 
-          logToFile(`CHAT_COMPLETE: Response completed, final length: ${fullResponse.length}`);
+        (result: any) => {
 
-          logToFile(`FINAL_RESPONSE: ${fullResponse}`);
+          if (currentTaskId) {
 
-  
+            completeTask(currentTaskId);
 
-          // Force one final update to ensure we have the complete response
-
-          // This bypasses throttling to guarantee the last content is shown
-
-          if (fullResponse.length > 0) {
-
-            setMessages(prev => {
-
-              const newMessages = [...prev];
-
-              let lastAssistantIdx = -1;
-
-              for (let i = newMessages.length - 1; i >= 0; i--) {
-
-                if (newMessages[i].role === 'assistant') {
-
-                  lastAssistantIdx = i;
-
-                  break;
-
-                }
-
-              }
-
-              if (lastAssistantIdx !== -1) {
-
-                newMessages[lastAssistantIdx] = {
-
-                  ...newMessages[lastAssistantIdx],
-
-                  content: fullResponse
-
-                };
-
-                logToFile(`FINAL_UPDATE: Forced final update with ${fullResponse.length} chars`);
-
-              }
-
-              return newMessages;
-
-            });
+            currentTaskId = null;
 
           }
 
-  
+        },
 
-          // Update token count after response completes
+        // Waiting callback
 
-          const finalUsage = agent.getTokenUsage();
+        () => { },
 
-          const contextTokenCount = agent.getProjectContext()?.content
+        // Thinking callback
 
-            ? agent.getTokenManager().countMessageTokens({
+        (step: any) => {
 
-                role: 'system',
+          if (step && step.content) {
 
-                content: agent.getProjectContext()?.content || ''
+            logToFile(`THINKING: type=${step.type}, content="${step.content.substring(0, 100)}"`);
 
-              })
+            addMessage('thinking', step.content, step.type);
 
-            : 0;
+          }
 
-          setLastTokenCount({
+        }
 
-            session: finalUsage.currentTokens,
+      );
 
-            total: finalUsage.currentTokens + contextTokenCount
+
+
+      // If no response was received, show a message
+
+      if (!assistantMessageAdded) {
+
+        logToFile('CHAT_COMPLETE: No response was received from AI');
+
+        addMessage('system', 'No response received from AI');
+
+      } else {
+
+        logToFile(`CHAT_COMPLETE: Response completed, final length: ${fullResponse.length}`);
+
+        logToFile(`FINAL_RESPONSE: ${fullResponse}`);
+
+
+
+        // Force one final update to ensure we have the complete response
+
+        // This bypasses throttling to guarantee the last content is shown
+
+        if (fullResponse.length > 0) {
+
+          setMessages(prev => {
+
+            const newMessages = [...prev];
+
+            let lastAssistantIdx = -1;
+
+            for (let i = newMessages.length - 1; i >= 0; i--) {
+
+              if (newMessages[i].role === 'assistant') {
+
+                lastAssistantIdx = i;
+
+                break;
+
+              }
+
+            }
+
+            if (lastAssistantIdx !== -1) {
+
+              newMessages[lastAssistantIdx] = {
+
+                ...newMessages[lastAssistantIdx],
+
+                content: fullResponse
+
+              };
+
+              logToFile(`FINAL_UPDATE: Forced final update with ${fullResponse.length} chars`);
+
+            }
+
+            return newMessages;
 
           });
 
         }
 
-  
 
-        // Clear tasks after a delay
 
-        if (tasks.length > 0) {
+        // Update token count after response completes
 
-          setTimeout(() => clearTasks(), 2000);
+        const finalUsage = agent.getTokenUsage();
 
-        }
+        const contextTokenCount = agent.getProjectContext()?.content
 
-  
+          ? agent.getTokenManager().countMessageTokens({
 
-      } catch (error: any) {
+            role: 'system',
 
-        if (error.name !== 'AbortError') {
+            content: agent.getProjectContext()?.content || ''
 
-          // Show full error details for debugging
+          })
 
-          const errorMsg = error.message || String(error);
+          : 0;
 
-          const errorStack = error.stack || '';
+        setLastTokenCount({
 
-          logToFile(`ERROR: ${errorMsg}\nStack: ${errorStack}`);
+          session: finalUsage.currentTokens,
 
-          addMessage('system', `Error: ${errorMsg}`);
+          total: finalUsage.currentTokens + contextTokenCount
 
-  
-
-          // Log full error to help debug
-
-          console.error('Chat error:', error);
-
-        } else {
-
-          logToFile('CHAT_ABORTED: User cancelled the request');
-
-        }
-
-      } finally {
-
-        logToFile(`CHAT_END: isProcessing=${isProcessing}, messages.length=${messages.length}`);
-
-  
-
-        // Clear any pending update timeouts
-
-        if (updateTimeout.current) {
-
-          clearTimeout(updateTimeout.current);
-
-          updateTimeout.current = null;
-
-          logToFile('CLEANUP: Cleared pending update timeout');
-
-        }
-
-  
-
-        setIsProcessing(false);
-
-        abortControllerRef.current = null;
+        });
 
       }
 
-    }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
 
-  
 
-      // Limit visible messages to last 50
+      // Clear tasks after a delay
 
-  
+      if (tasks.length > 0) {
 
-      const visibleMessages = useMemo(() => messages.slice(-50), [messages]);
+        setTimeout(() => clearTasks(), 2000);
 
-  
+      }
 
-    // Memoize sliced messages to prevent re-renders
 
-    const staticMessages = useMemo(() => visibleMessages.slice(0, -1), [visibleMessages]);
 
-    const lastMessage = useMemo(() => visibleMessages.length > 0 ? visibleMessages[visibleMessages.length - 1] : null, [visibleMessages]);
+    } catch (error: any) {
 
-  
+      if (error.name !== 'AbortError') {
 
-    if (!initialized) {
+        // Show full error details for debugging
 
-      return (
+        const errorMsg = error.message || String(error);
 
-        <Box padding={1}>
+        const errorStack = error.stack || '';
 
-          <Text>Initializing...</Text>
+        logToFile(`ERROR: ${errorMsg}\nStack: ${errorStack}`);
 
-        </Box>
+        addMessage('system', `Error: ${errorMsg}`);
 
-      );
+
+
+        // Log full error to help debug
+
+        console.error('Chat error:', error);
+
+      } else {
+
+        logToFile('CHAT_ABORTED: User cancelled the request');
+
+      }
+
+    } finally {
+
+      logToFile(`CHAT_END: isProcessing=${isProcessing}, messages.length=${messages.length}`);
+
+
+
+      // Clear any pending update timeouts
+
+      if (updateTimeout.current) {
+
+        clearTimeout(updateTimeout.current);
+
+        updateTimeout.current = null;
+
+        logToFile('CLEANUP: Cleared pending update timeout');
+
+      }
+
+
+
+      setIsProcessing(false);
+
+      abortControllerRef.current = null;
 
     }
 
-  
+  }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
+
+
+
+  // Limit visible messages to last 50
+
+
+
+  const visibleMessages = useMemo(() => messages.slice(-50), [messages]);
+
+
+
+  // Memoize sliced messages to prevent re-renders
+
+  const staticMessages = useMemo(() => visibleMessages.slice(0, -1), [visibleMessages]);
+
+  const lastMessage = useMemo(() => visibleMessages.length > 0 ? visibleMessages[visibleMessages.length - 1] : null, [visibleMessages]);
+
+
+
+  if (!initialized) {
 
     return (
 
-      <Box flexDirection="column">
+      <Box padding={1}>
 
-        {/* Messages area - use Static for completed messages to prevent re-renders */}
+        <Text>Initializing...</Text>
+
+      </Box>
+
+    );
+
+  }
+
+
+
+  return (
+
+
+
+    <Box flexDirection="column" height="100%">
+
+
+
+      <Box flexDirection="column" flexGrow={1}>
+
+
+
+        {/* Messages area */}
+
+
 
         <Box flexDirection="column" paddingX={2} paddingY={1}>
 
+
+
           <>
+
+
 
             {/* Render all completed messages (all but last) with Static to prevent re-renders */}
 
+
+
             {staticMessages.length > 0 && (
+
+
 
               <Static items={staticMessages}>
 
+
+
                 {(msg) => (
+
+
 
                   <Box key={msg.id} flexDirection="column" marginBottom={1}>
 
+
+
                     <MessageItem msg={msg} debugMode={debugMode} />
+
+
 
                   </Box>
 
+
+
                 )}
+
+
 
               </Static>
 
+
+
             )}
 
-  
+
+
+
+
+
 
             {/* Render the last (potentially streaming) message separately */}
 
+
+
             {lastMessage && (
+
+
 
               <Box flexDirection="column" marginBottom={1}>
 
+
+
                 <MessageItem msg={lastMessage} debugMode={debugMode} />
+
+
 
               </Box>
 
+
+
             )}
+
+
 
           </>
 
+
+
         </Box>
 
-  
+
+
+      </Box>
+
+
+
+
+
+
 
       {/* Task view - positioned above input */}
+
+
+
       {tasks.length > 0 && debugMode && (
+
+
+
         <Box marginX={2} marginBottom={1}>
+
+
+
           <TaskList tasks={tasks} />
+
+
+
         </Box>
+
+
+
       )}
 
+
+
+
+
+
+
       {/* Input field using CommandInput component */}
+
+
+
       <CommandInput
+
+
+
         input={input}
+
+
+
         onInputChange={setInput}
+
+
+
         onSubmit={handleSubmit}
+
+
+
         placeholder={isProcessing ? "Processing..." : "Type your message..."}
+
+
+
       />
 
+
+
+
+
+
+
       {/* Token count under input field */}
+
+
+
       <Box paddingX={2} paddingBottom={1}>
+
+
+
         <Text dimColor color="gray">
+
+
+
           Session: {lastTokenCount.session.toLocaleString()} tokens • Total: {lastTokenCount.total.toLocaleString()} tokens
+
+
+
         </Text>
+
+
+
       </Box>
 
+
+
+
+
+
+
       {/* Footer help text */}
+
+
+
       <Box paddingX={2} paddingBottom={1}>
+
+
+
         <Text dimColor>
+
+
+
           ESC: Cancel • Ctrl+C (x2): Exit • /help: Commands
+
+
+
         </Text>
+
+
+
       </Box>
+
+
+
     </Box>
+
+
+
   );
 }
