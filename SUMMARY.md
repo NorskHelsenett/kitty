@@ -47,7 +47,7 @@ echo "hello" | kitty "translate to Norwegian"
 - `plugin:list`, `plugin:install`, `agent:demo`, `install:global`, version bump scripts, etc.
 
 ## Dependencies
-- **Runtime**: `chalk`, `highlight.js`, `ink`, `ink-text-input`, `js-yaml`, `marked`, `marked-terminal`, `openai`, `react`, `tiktoken`
+- **Runtime**: `chalk`, `highlight.js`, `ink`, `ink-text-input`, `js-tiktoken`, `js-yaml`, `marked`, `marked-terminal`, `openai`, `react`
 - **Dev**: `@types/js-yaml`, `@types/marked-terminal`, `@types/node`, `@types/react`, `bun-types`, `react-devtools-core`
 
 ## Top‑Level File Structure

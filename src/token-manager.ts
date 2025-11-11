@@ -1,4 +1,4 @@
-import { encoding_for_model, Tiktoken } from 'tiktoken';
+import { encodingForModel, Tiktoken } from 'js-tiktoken';
 import OpenAI from 'openai';
 
 export interface TokenUsage {
@@ -26,10 +26,10 @@ export class TokenManager {
   ) {
     // Use cl100k_base encoding which works for most modern models
     try {
-      this.encoder = encoding_for_model(modelName as any);
+      this.encoder = encodingForModel(modelName as any);
     } catch {
       // Fallback to cl100k_base if model not recognized
-      this.encoder = encoding_for_model('gpt-3.5-turbo');
+      this.encoder = encodingForModel('gpt-3.5-turbo' as any);
     }
     this.maxTokens = maxTokens;
     this.summarizationThreshold = summarizationThreshold;
