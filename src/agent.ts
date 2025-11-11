@@ -414,28 +414,46 @@ export class AIAgent {
     const promptMessages = [systemMessage, ...this.conversationHistory];
     const completionTokens = this.tokenManager.getAvailableCompletionTokens(promptMessages, 2048);
 
-    const response = await this.client.chat.completions.create({
-      model: 'nhn-large:fast',
-      max_tokens: completionTokens,
-      temperature: this.sessionTemperature,
-      messages: promptMessages,
-      stream: true,
-    });
+    try {
+      const response = await this.client.chat.completions.create({
+        model: this.modelName,
+        max_tokens: completionTokens,
+        temperature: this.sessionTemperature,
+        messages: promptMessages,
+        stream: true,
+      });
 
-    let fullResponse = '';
-    for await (const chunk of response) {
-      const delta = chunk.choices[0]?.delta;
+      let fullResponse = '';
+      for await (const chunk of response) {
+        const delta = chunk.choices[0]?.delta;
 
-      if (delta?.content) {
-        fullResponse += delta.content;
-        onTextChunk?.(delta.content);
+        if (delta?.content) {
+          fullResponse += delta.content;
+          onTextChunk?.(delta.content);
+        }
       }
-    }
 
-    this.conversationHistory.push({
-      role: 'assistant',
-      content: fullResponse,
-    });
+      this.conversationHistory.push({
+        role: 'assistant',
+        content: fullResponse,
+      });
+    } catch (error: any) {
+      // Log the error for debugging
+      console.error('Error in respondDirectly:', error);
+
+      // Add error to conversation history
+      const errorMessage = `Error: ${error.message || String(error)}`;
+      this.conversationHistory.push({
+        role: 'assistant',
+        content: errorMessage,
+      });
+
+      // Still call the callback with error message
+      onTextChunk?.(errorMessage);
+
+      // Re-throw to let caller handle it
+      throw error;
+    }
   }
 
   private async generateFinalResponse(
@@ -503,7 +521,7 @@ Please provide a comprehensive response to the user based on these results.`;
     const completionTokens = this.tokenManager.getAvailableCompletionTokens(messagesWithTaskContext, 2048);
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-large:fast',
+      model: this.modelName,
       max_tokens: completionTokens,
       temperature: this.sessionTemperature,
       messages: messagesWithTaskContext,
