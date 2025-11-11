@@ -63,6 +63,34 @@ const Footer = React.memo(() => (
 ));
 Footer.displayName = 'Footer';
 
+const TokenDisplay = React.memo(({ session, total }: { session: number; total: number }) => (
+  <Box paddingX={2} paddingBottom={1}>
+    <Text dimColor color="gray">
+      Session: {session.toLocaleString()} tokens • Total: {total.toLocaleString()} tokens
+    </Text>
+  </Box>
+));
+TokenDisplay.displayName = 'TokenDisplay';
+
+const InputField = ({ value, onChange, onSubmit, isProcessing }: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  isProcessing: boolean;
+}) => (
+  <Box borderStyle="round" borderColor="cyan" paddingX={1} marginX={2} marginBottom={1}>
+    <Text color="cyan" bold>› </Text>
+    <TextInput
+      value={value}
+      onChange={onChange}
+      onSubmit={onSubmit}
+      placeholder={isProcessing ? "Processing..." : "Type your message..."}
+      showCursor={!isProcessing}
+      focus={true}
+    />
+  </Box>
+);
+
 const TaskListView = React.memo(({ tasks }: { tasks: Task[] }) => (
   <Box flexDirection="column" borderStyle="single" borderColor="blue" paddingX={1} marginX={2} marginBottom={1}>
     <Text color="blue" bold>Tasks:</Text>
@@ -75,31 +103,38 @@ const TaskListView = React.memo(({ tasks }: { tasks: Task[] }) => (
 ));
 TaskListView.displayName = 'TaskListView';
 
-const TokenSummary = React.memo(({ sessionTokens, contextTokens, totalTokens, maxTokens, percentageUsed, tokenColor }: {
-  sessionTokens: number;
-  contextTokens: number;
-  totalTokens: number;
-  maxTokens: number;
-  percentageUsed: number;
-  tokenColor: string;
-}) => (
-  <Box flexDirection="column" borderStyle="single" borderColor={tokenColor as any} paddingX={1} marginX={2} marginBottom={1}>
-    <Box justifyContent="space-between">
-      <Text color={tokenColor as any}>
-        Session: {sessionTokens.toLocaleString()} tokens
+// Memoized message component to prevent re-rendering on input changes
+const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: boolean }) => {
+  const content = msg.content || '';
+  const isThinking = msg.role === 'thinking';
+  const color = msg.role === 'user' ? 'cyan' :
+               msg.role === 'assistant' ? 'green' :
+               msg.role === 'thinking' ? 'gray' :
+               'yellow';
+  const prefix = msg.role === 'user' ? '› ' :
+                msg.role === 'assistant' ? '● ' :
+                msg.role === 'thinking' ? '○○○ ' :
+                '• ';
+  const label = msg.role === 'user' ? 'You' :
+               msg.role === 'assistant' ? 'KITTY' :
+               msg.role === 'thinking' ? `Thinking (${msg.thinkingType || 'processing'})` :
+               'System';
+
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Text color={color} bold={!isThinking} dimColor={isThinking}>
+        {prefix}{label}
       </Text>
-      <Text color="gray">
-        Context: {contextTokens.toLocaleString()} tokens
-      </Text>
+      {content && content.trim().length > 0 ? (
+        <Text color={color} dimColor={isThinking}>{content}</Text>
+      ) : (
+        debugMode && <Text dimColor>(no content - {content.length} chars)</Text>
+      )}
     </Box>
-    <Box justifyContent="space-between">
-      <Text color={tokenColor as any}>
-        Total: {totalTokens.toLocaleString()} / {maxTokens.toLocaleString()} ({percentageUsed.toFixed(1)}%)
-      </Text>
-    </Box>
-  </Box>
-));
-TokenSummary.displayName = 'TokenSummary';
+  );
+});
+MessageItem.displayName = 'MessageItem';
+
 
 export function Chat({ agent, debugMode = false }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -108,6 +143,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [initialized, setInitialized] = useState(false);
   const [tokenSpeed, setTokenSpeed] = useState<number>(0);
+  const [lastTokenCount, setLastTokenCount] = useState<{ session: number; total: number }>({ session: 0, total: 0 });
   const { exit } = useApp();
 
   // Keyboard control state
@@ -324,7 +360,30 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
     setTasks([]);
   }, []);
 
-  const handleSubmit = async () => {
+  const handleCommand = useCallback(async (command: string) => {
+    const cmd = command.toLowerCase().trim();
+
+    if (cmd === '/help') {
+      addMessage('system', `Available Commands:
+/help - Show this help message
+/clear - Clear conversation history
+/models - List available models
+/agents - Manage agents
+/plugins - Manage plugins
+
+Keyboard Shortcuts:
+ESC - Cancel ongoing request
+Ctrl+C (twice) - Exit application`);
+    } else if (cmd === '/clear') {
+      agent.clearHistory();
+      setMessages([]);
+      addMessage('system', 'Conversation cleared');
+    } else {
+      addMessage('system', `Unknown command: ${command}`);
+    }
+  }, [agent, addMessage, setMessages]);
+
+  const handleSubmit = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed || isProcessing) return;
 
@@ -418,6 +477,19 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
             return newMessages;
           });
         }
+
+        // Update token count after response completes
+        const finalUsage = agent.getTokenUsage();
+        const contextTokenCount = agent.getProjectContext()?.content
+          ? agent.getTokenManager().countMessageTokens({
+              role: 'system',
+              content: agent.getProjectContext()?.content || ''
+            })
+          : 0;
+        setLastTokenCount({
+          session: finalUsage.currentTokens,
+          total: finalUsage.currentTokens + contextTokenCount
+        });
       }
 
       // Clear tasks after a delay
@@ -451,58 +523,10 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
       setIsProcessing(false);
       abortControllerRef.current = null;
     }
-  };
+  }, [input, isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
 
-  const handleCommand = async (command: string) => {
-    const cmd = command.toLowerCase().trim();
-
-    if (cmd === '/help') {
-      addMessage('system', `Available Commands:
-/help - Show this help message
-/clear - Clear conversation history
-/models - List available models
-/agents - Manage agents
-/plugins - Manage plugins
-
-Keyboard Shortcuts:
-ESC - Cancel ongoing request
-Ctrl+C (twice) - Exit application`);
-    } else if (cmd === '/clear') {
-      agent.clearHistory();
-      setMessages([]);
-      addMessage('system', 'Conversation cleared');
-    } else {
-      addMessage('system', `Unknown command: ${command}`);
-    }
-  };
-
-  // Format message content
-  // TODO: Add proper markdown rendering with Ink components later
-  const formatMessage = (msg: Message): string => {
-    return msg.content || '';
-  };
-
-  // Get token usage - only calculate once at startup to prevent flickering
-  const initialUsage = useRef(agent.getTokenUsage());
-
-  // Calculate context tokens once
-  const getInitialContextTokens = () => {
-    const context = agent.getProjectContext();
-    return context?.content
-      ? agent.getTokenManager().countMessageTokens({
-          role: 'system',
-          content: context.content
-        })
-      : 0;
-  };
-  const initialContextTokens = useRef(getInitialContextTokens());
-
-  const sessionTokens = initialUsage.current.currentTokens;
-  const totalTokens = sessionTokens + initialContextTokens.current;
-  const percentageUsed = (totalTokens / initialUsage.current.maxTokens) * 100;
-
-  // Token color based on usage
-  const tokenColor = percentageUsed >= 90 ? 'red' : percentageUsed >= 70 ? 'yellow' : 'green';
+  // Memoize the visible messages to prevent recalculating on every render
+  const visibleMessages = useMemo(() => messages.slice(-50), [messages]);
 
 
   if (!initialized) {
@@ -520,41 +544,15 @@ Ctrl+C (twice) - Exit application`);
 
       {/* Messages area - scrollable */}
       <Box flexDirection="column" flexGrow={1} paddingX={2} paddingY={1} overflow="hidden">
-        {messages.length === 0 ? (
+        {visibleMessages.length === 0 ? (
           <Box flexDirection="column">
             <Text color="cyan">Welcome to KITTY! 🐱</Text>
             <Text dimColor>Type your message below or /help for commands</Text>
           </Box>
         ) : (
-          messages.slice(-50).map((msg) => {
-            const content = formatMessage(msg);
-            const isThinking = msg.role === 'thinking';
-            const color = msg.role === 'user' ? 'cyan' :
-                         msg.role === 'assistant' ? 'green' :
-                         msg.role === 'thinking' ? 'gray' :
-                         'yellow';
-            const prefix = msg.role === 'user' ? '› ' :
-                          msg.role === 'assistant' ? '● ' :
-                          msg.role === 'thinking' ? '○○○ ' :
-                          '• ';
-            const label = msg.role === 'user' ? 'You' :
-                         msg.role === 'assistant' ? 'KITTY' :
-                         msg.role === 'thinking' ? `Thinking (${msg.thinkingType || 'processing'})` :
-                         'System';
-
-            return (
-              <Box key={msg.id} flexDirection="column" marginBottom={1}>
-                <Text color={color} bold={!isThinking} dimColor={isThinking}>
-                  {prefix}{label}
-                </Text>
-                {content && content.trim().length > 0 ? (
-                  <Text color={color} dimColor={isThinking}>{content}</Text>
-                ) : (
-                  debugMode && <Text dimColor>(no content - {msg.content?.length || 0} chars)</Text>
-                )}
-              </Box>
-            );
-          })
+          visibleMessages.map((msg) => (
+            <MessageItem key={msg.id} msg={msg} debugMode={debugMode} />
+          ))
         )}
       </Box>
 
@@ -563,28 +561,16 @@ Ctrl+C (twice) - Exit application`);
         <TaskListView tasks={tasks} />
       )}
 
-      {/* Token summary - static to prevent flickering */}
-      <TokenSummary
-        sessionTokens={sessionTokens}
-        contextTokens={initialContextTokens.current}
-        totalTokens={totalTokens}
-        maxTokens={initialUsage.current.maxTokens}
-        percentageUsed={percentageUsed}
-        tokenColor={tokenColor}
+      {/* Input field */}
+      <InputField
+        value={input}
+        onChange={setInput}
+        onSubmit={handleSubmit}
+        isProcessing={isProcessing}
       />
 
-      {/* Input field */}
-      <Box borderStyle="round" borderColor="cyan" paddingX={1} marginX={2} marginBottom={1}>
-        <Text color="cyan" bold>› </Text>
-        <TextInput
-          value={input}
-          onChange={setInput}
-          onSubmit={handleSubmit}
-          placeholder={isProcessing ? "Processing..." : "Type your message..."}
-          showCursor={!isProcessing}
-          focus={true}
-        />
-      </Box>
+      {/* Token count under input field */}
+      <TokenDisplay session={lastTokenCount.session} total={lastTokenCount.total} />
 
       {/* Footer help text */}
       <Footer />
