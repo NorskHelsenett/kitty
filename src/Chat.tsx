@@ -52,9 +52,9 @@ const getInitialMessages = (): Message[] => [
 ██╔═██╗ ██║   ██║      ██║     ╚██╔╝
 ██║  ██╗██║   ██║      ██║      ██║
 ╚═╝  ╚═╝╚═╝   ╚═╝      ╚═╝      ╚═╝
-Welcome to KITTY - Your AI-powered assistant!
-                v0.1.0
-
+Welcome to KITTY -  Your AI-powered assistant!
+    v0.1.0       •          {{modelname}}
+{{currentPath}}
                                                   `,
     timestamp: Date.now(),
   },
@@ -77,8 +77,6 @@ const messagesReducer = (state: Message[], action: MessageAction): Message[] => 
       }
       const updated = state.slice(0, -1);
       return [...updated, { ...state[state.length - 1], content: action.content }];
-    case 'CLEAR':
-      return getInitialMessages();
     default:
       return state;
   }
@@ -136,6 +134,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   // Keyboard control state
   const lastCtrlCTime = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const [showExitPrompt, setShowExitPrompt] = useState(false);
 
   // Token tracking for streaming
   const streamStartTime = useRef<number>(0);
@@ -201,12 +200,23 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
         // Second Ctrl+C within 5 seconds - exit
         exit();
       } else {
-        // First Ctrl+C - set timer (input field manages its own state now)
+        // First Ctrl+C - set timer and show prompt
         lastCtrlCTime.current = now;
-        addMessage('system', 'Press Ctrl+C again within 5 seconds to exit');
+        setShowExitPrompt(true);
       }
     }
   });
+
+  // Effect to auto-hide exit prompt after 5 seconds
+  useEffect(() => {
+    if (showExitPrompt) {
+      const timeout = setTimeout(() => {
+        setShowExitPrompt(false);
+      }, 2000);
+
+      return () => clearTimeout(timeout);
+    }
+  }, [showExitPrompt]);
 
   const addMessage = useCallback((role: Message['role'], content: string, thinkingType?: 'planning' | 'reflection' | 'decision') => {
     // Guard against null/undefined content
@@ -334,6 +344,9 @@ Ctrl+C (twice) - Exit application`);
   const handleSubmit = useCallback(async (value: string) => {
     const trimmed = value.trim();
     if (!trimmed || isProcessing) return;
+
+    // Hide exit prompt if user submits a new prompt
+    setShowExitPrompt(false);
 
     // Clear completed tasks when starting a new query
     const allTasksCompleted = tasks.length > 0 && tasks.every(t => t.completed);
@@ -562,6 +575,15 @@ Ctrl+C (twice) - Exit application`);
             isDisabled={isProcessing}
           />
         </Box>
+
+        {/* Exit prompt - shown when Ctrl+C is pressed once */}
+        {showExitPrompt && (
+          <Box paddingX={2} paddingBottom={1}>
+            <Text color="yellow">
+              Press Ctrl+C again within 2 seconds to exit
+            </Text>
+          </Box>
+        )}
 
         {/* Token count under input field */}
         <Box paddingX={2} paddingBottom={1}>
