@@ -18,8 +18,8 @@ export function TaskList({ tasks }: TaskListProps) {
   }
 
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={1} borderStyle="round" borderColor="blue">
-      <Text bold color="blue" dimColor={false}>TASKS:</Text>
+    <Box flexDirection="column" paddingX={1} paddingY={1}>
+      <Text bold color="blue">TASKS:</Text>
       {tasks.map((task) => (
         <Box key={task.id} marginLeft={1}>
           <Text color={task.completed ? 'green' : 'yellow'} dimColor={task.completed}>

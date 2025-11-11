@@ -301,6 +301,12 @@ Ctrl+C (twice) - Exit application`);
     const trimmed = value.trim();
     if (!trimmed || isProcessing) return;
 
+    // Clear completed tasks when starting a new query
+    const allTasksCompleted = tasks.length > 0 && tasks.every(t => t.completed);
+    if (allTasksCompleted) {
+      clearTasks();
+    }
+
     setIsProcessing(true);
     streamStartTime.current = Date.now();
     streamTokenCount.current = 0;
@@ -340,7 +346,26 @@ Ctrl+C (twice) - Exit application`);
         },
         // Tool call callback
         (tool: any) => {
-          const taskDesc = `${tool.name}${tool.input?.path ? `: ${tool.input.path}` : ''}`;
+          // Create more descriptive task names
+          let taskDesc = '';
+          const input = tool.input || {};
+
+          if (tool.name === 'execute_command') {
+            taskDesc = `Running: ${input.command || 'command'}`;
+          } else if (tool.name === 'read_file') {
+            taskDesc = `Reading: ${input.path || 'file'}`;
+          } else if (tool.name === 'write_file') {
+            taskDesc = `Writing: ${input.path || 'file'}`;
+          } else if (tool.name === 'search') {
+            taskDesc = `Searching: ${input.query || input.pattern || 'code'}`;
+          } else if (input.path) {
+            taskDesc = `${tool.name}: ${input.path}`;
+          } else if (input.command) {
+            taskDesc = `${tool.name}: ${input.command}`;
+          } else {
+            taskDesc = tool.name;
+          }
+
           currentTaskId = addTask(taskDesc);
         },
         // Tool result callback
@@ -426,7 +451,7 @@ Ctrl+C (twice) - Exit application`);
       setIsProcessing(false);
       abortControllerRef.current = null;
     }
-  }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
+  }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks, handleCommand]);
 
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
   const isStreaming = isProcessing && lastMessage?.role === 'assistant';
