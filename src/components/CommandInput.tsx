@@ -13,13 +13,12 @@ interface CommandInputProps {
 }
 
 const AVAILABLE_COMMANDS: CommandSuggestion[] = [
-  { command: '/models', description: 'Select which AI model to use' },
+  { command: '/model', description: 'Select which AI model to use' },
   { command: '/agents', description: 'Select which agents to enable/disable' },
   { command: '/plugins', description: 'Select which plugins to enable/disable' },
   { command: '/init', description: 'Create a KITTY.md file for project context' },
   { command: '/reinit', description: 'Regenerate KITTY.md (overwrites existing)' },
   { command: '/help', description: 'Show this help message' },
-  { command: '/clear', description: 'Clear conversation history' },
 ];
 
 export function CommandInput({ onSubmit, placeholder, isDisabled = false }: CommandInputProps) {

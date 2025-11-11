@@ -7,6 +7,7 @@ import type { AIAgent } from './agent.js';
 import { setConfirmationCallback } from './tools/executor.js';
 import { CommandInput } from './components/CommandInput.js';
 import { TaskList, Task as TaskType } from './components/TaskList.js';
+import { SelectionMenu, SelectionItem } from './components/SelectionMenu.js';
 
 // Configure marked for terminal output
 marked.use(markedTerminal({
@@ -38,6 +39,33 @@ type MessageAction =
   | { type: 'UPDATE_LAST'; content: string }
   | { type: 'CLEAR' };
 
+// Initial messages shown on startup and after clear
+const getInitialMessages = (): Message[] => [
+  {
+    id: 'header',
+    role: 'none',
+    content: `
+
+██╗  ██╗██╗████████╗████████╗██╗   ██╗
+██║ ██╔╝██║╚══██╔══╝╚══██╔══╝╚██╗ ██╔╝
+█████╔╝ ██║   ██║      ██║    ╚████╔╝
+██╔═██╗ ██║   ██║      ██║     ╚██╔╝
+██║  ██╗██║   ██║      ██║      ██║
+╚═╝  ╚═╝╚═╝   ╚═╝      ╚═╝      ╚═╝
+Welcome to KITTY - Your AI-powered assistant!
+                v0.1.0
+
+                                                  `,
+    timestamp: Date.now(),
+  },
+  {
+    id: 'welcome',
+    role: 'assistant',
+    content: 'Welcome to KITTY! 🐱\nType your message below or /help for commands',
+    timestamp: Date.now(),
+  }
+];
+
 // Reducer for messages - avoids array spreading in hot path
 const messagesReducer = (state: Message[], action: MessageAction): Message[] => {
   switch (action.type) {
@@ -50,7 +78,7 @@ const messagesReducer = (state: Message[], action: MessageAction): Message[] => 
       const updated = state.slice(0, -1);
       return [...updated, { ...state[state.length - 1], content: action.content }];
     case 'CLEAR':
-      return [];
+      return getInitialMessages();
     default:
       return state;
   }
@@ -94,37 +122,15 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
 MessageItem.displayName = 'MessageItem';
 
 export function Chat({ agent, debugMode = false }: ChatProps) {
-  const [messages, dispatch] = useReducer(messagesReducer, [
-    {
-      id: 'header',
-      role: 'none',
-      content: `
-
-██╗  ██╗██╗████████╗████████╗██╗   ██╗
-██║ ██╔╝██║╚══██╔══╝╚══██╔══╝╚██╗ ██╔╝
-█████╔╝ ██║   ██║      ██║    ╚████╔╝ 
-██╔═██╗ ██║   ██║      ██║     ╚██╔╝  
-██║  ██╗██║   ██║      ██║      ██║   
-╚═╝  ╚═╝╚═╝   ╚═╝      ╚═╝      ╚═╝   
-Welcome to KITTY - Your AI-powered assistant!  
-                v0.1.0                                  
-                                                  
-                                                  `,
-      timestamp: Date.now(),
-    },
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content: 'Welcome to KITTY! 🐱\nType your message below or /help for commands',
-      timestamp: Date.now(),
-    }
-  ]);
+  const [messages, dispatch] = useReducer(messagesReducer, getInitialMessages());
   const [isProcessing, setIsProcessing] = useState(false);
   const [tasks, setTasks] = useState<TaskType[]>([]);
   const [initialized, setInitialized] = useState(false);
   const [tokenSpeed, setTokenSpeed] = useState<number>(0);
   const [lastTokenCount, setLastTokenCount] = useState<{ session: number; total: number }>({ session: 0, total: 0 });
   const [layoutKey, setLayoutKey] = useState(0);
+  const [showModelMenu, setShowModelMenu] = useState(false);
+  const [modelItems, setModelItems] = useState<SelectionItem[]>([]);
   const { exit } = useApp();
 
   // Keyboard control state
@@ -274,24 +280,52 @@ Welcome to KITTY - Your AI-powered assistant!
     setTasks([]);
   }, []);
 
+  const handleModelSelection = useCallback(async (selectedIds: string[]) => {
+    if (selectedIds.length > 0) {
+      const selectedModel = selectedIds[0];
+      try {
+        await agent.setModel(selectedModel);
+        addMessage('system', `Model changed to: ${selectedModel}`);
+      } catch (error) {
+        addMessage('system', `Failed to change model: ${error}`);
+      }
+    }
+    setShowModelMenu(false);
+  }, [agent, addMessage]);
+
+  const handleModelMenuCancel = useCallback(() => {
+    setShowModelMenu(false);
+  }, []);
+
   const handleCommand = useCallback(async (command: string) => {
     const cmd = command.toLowerCase().trim();
 
     if (cmd === '/help') {
       addMessage('system', `Available Commands:
 /help - Show this help message
-/clear - Clear conversation history
-/models - List available models
+/model - Select AI model to use
 /agents - Manage agents
 /plugins - Manage plugins
 
 Keyboard Shortcuts:
 ESC - Cancel ongoing request
 Ctrl+C (twice) - Exit application`);
-    } else if (cmd === '/clear') {
-      agent.clearHistory();
-      dispatch({ type: 'CLEAR' });
-      addMessage('system', 'Conversation cleared');
+    } else if (cmd === '/model') {
+      // Fetch available models
+      try {
+        const models = await agent.listAvailableModels();
+        const currentModel = agent.getCurrentModel();
+        const items: SelectionItem[] = models.map(model => ({
+          id: model.id,
+          name: model.id,
+          description: model.owned_by || 'AI Model',
+          enabled: model.id === currentModel
+        }));
+        setModelItems(items);
+        setShowModelMenu(true);
+      } catch (error) {
+        addMessage('system', `Failed to load models: ${error}`);
+      }
     } else {
       addMessage('system', `Unknown command: ${command}`);
     }
@@ -471,6 +505,19 @@ Ctrl+C (twice) - Exit application`);
       <Box padding={1}>
         <Text>Initializing...</Text>
       </Box>
+    );
+  }
+
+  // Show model selection menu if requested
+  if (showModelMenu) {
+    return (
+      <SelectionMenu
+        title="Select AI Model"
+        items={modelItems}
+        onSubmit={handleModelSelection}
+        onCancel={handleModelMenuCancel}
+        singleSelect={true}
+      />
     );
   }
 

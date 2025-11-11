@@ -1,7 +1,7 @@
 /**
  * GitHub Plugin - TypeScript Source
  * 
- * Build with: bun run build
+ * Build with: npm run build
  * This generates dist/index.js which is referenced in the plugin manifest
  */
 

@@ -35,7 +35,7 @@ cd my-plugin
 ### 2. Initialize Package
 
 ```bash
-bun init -y
+npm init -y
 ```
 
 ### 3. Add Build Script
@@ -47,11 +47,21 @@ Edit `package.json`:
   "name": "my-plugin",
   "type": "module",
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target node --format esm",
-    "watch": "bun build src/index.ts --outdir dist --target node --format esm --watch"
+    "build": "esbuild src/index.ts --bundle --platform=node --outfile=dist/index.js --format=esm",
+    "watch": "esbuild src/index.ts --bundle --platform=node --outfile=dist/index.js --format=esm --watch",
+    "test": "jest"
   }
 }
 ```
+
+Install build/test tools:
+
+```bash
+npm install --save-dev esbuild typescript
+npm install --save-dev jest ts-jest @types/jest
+```
+
+(You can also use other bundlers or tsc + a bundler if preferred.)
 
 ### 4. Write TypeScript Code
 
@@ -86,7 +96,7 @@ export const tools: Tool[] = [myTool];
 ### 5. Build
 
 ```bash
-bun run build
+npm run build
 ```
 
 This generates `dist/index.js`.
@@ -111,6 +121,11 @@ codeFile: ./my-plugin/dist/index.js
 ### 7. Install
 
 ```bash
+# Install dependencies and build
+npm install
+npm run build
+
+# Install the plugin
 kitty plugin install my-plugin.yaml
 ```
 
@@ -137,8 +152,8 @@ This directory contains a complete example:
 ```bash
 # Build the plugin
 cd examples/plugins/github-plugin
-bun install
-bun run build
+npm install
+npm run build
 
 # Install the plugin
 cd ../..
@@ -157,23 +172,31 @@ kitty
 
 ## Advanced: With Tests
 
-Add Jest or Bun's test runner:
+Add Jest for TypeScript testing:
 
 **src/index.test.ts:**
 ```typescript
-import { test, expect } from 'bun:test';
+import { describe, it, expect } from '@jest/globals';
 import { tools } from './index';
 
-test('tool executes correctly', async () => {
-  const tool = tools[0];
-  const result = await tool.execute({ input: 'test' });
-  expect(result).toBe('Processed: test');
+describe('tools', () => {
+  it('tool executes correctly', async () => {
+    const tool = tools[0];
+    const result = await tool.execute({ input: 'test' });
+    expect(result).toBe('Processed: test');
+  });
 });
+```
+
+Configure Jest for TypeScript (basic):
+
+```bash
+npx ts-jest config:init
 ```
 
 Run tests:
 ```bash
-bun test
+npm test
 ```
 
 ## Tips
@@ -182,7 +205,7 @@ bun test
 2. **Version control** - Add your plugin directory to git
 3. **Document** - Add comments and README for your plugin
 4. **Test** - Write tests before building
-5. **Bundle** - Use `--minify` flag for smaller builds
+5. **Bundle** - Use `--minify` flag for smaller builds (esbuild supports `--minify`)
 
 ## Inline vs External - When to Use What
 
@@ -198,3 +221,4 @@ bun test
 - Want to write tests
 - Multiple developers working on it
 - Need better IDE support
+```

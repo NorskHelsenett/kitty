@@ -33,9 +33,9 @@ export function SelectionMenu({ title, items, onSubmit, onCancel, singleSelect =
       return;
     }
 
-    if (key.upArrow) {
+    if (key.upArrow || input === 'k') {
       setSelectedIndex(prev => Math.max(0, prev - 1));
-    } else if (key.downArrow) {
+    } else if (key.downArrow || input === 'j') {
       setSelectedIndex(prev => Math.min(items.length - 1, prev + 1));
     } else if (input === ' ') {
       const currentItem = items[selectedIndex];
@@ -66,9 +66,9 @@ export function SelectionMenu({ title, items, onSubmit, onCancel, singleSelect =
       </Box>
       <Box marginBottom={1}>
         <Text dimColor>
-          {singleSelect 
-            ? 'Use ↑↓ to navigate, Space to select, Enter to confirm, Esc to cancel'
-            : 'Use ↑↓ to navigate, Space to select/deselect, Enter to confirm, Esc to cancel'}
+          {singleSelect
+            ? 'Use ↑↓/k/j to navigate, Space to select, Enter to confirm, Esc to cancel'
+            : 'Use ↑↓/k/j to navigate, Space to select/deselect, Enter to confirm, Esc to cancel'}
         </Text>
       </Box>
       
