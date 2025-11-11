@@ -345,15 +345,16 @@ Ctrl+C (twice) - Exit application`);
     streamStartTime.current = Date.now();
     streamTokenCount.current = 0;
 
-    addMessage('user', trimmed);
-    logToFile(`USER: ${trimmed}`);
-
     // Handle slash commands
     if (trimmed.startsWith('/')) {
+      logToFile(`COMMAND: ${trimmed}`);
       await handleCommand(trimmed);
       setIsProcessing(false);
       return;
     }
+
+    addMessage('user', trimmed);
+    logToFile(`USER: ${trimmed}`);
 
     try {
       let fullResponse = '';
