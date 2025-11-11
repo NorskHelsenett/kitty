@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Box, Text, useInput, useApp } from 'ink';
-import TextInput from 'ink-text-input';
+import { Box, Text, useInput, useApp, Static } from 'ink';
 import chalk from 'chalk';
 import { marked } from 'marked';
 import { markedTerminal } from 'marked-terminal';
 import type { AIAgent } from './agent.js';
 import { setConfirmationCallback } from './tools/executor.js';
+import { CommandInput } from './components/CommandInput.js';
+import { TaskList, Task as TaskType } from './components/TaskList.js';
 
 // Configure marked for terminal output
 marked.use(markedTerminal({
@@ -24,12 +25,6 @@ interface Message {
   content: string;
   timestamp: number;
   thinkingType?: 'planning' | 'reflection' | 'decision';
-}
-
-interface Task {
-  id: string;
-  description: string;
-  completed: boolean;
 }
 
 interface ChatProps {
@@ -72,77 +67,7 @@ const TokenDisplay = React.memo(({ session, total }: { session: number; total: n
 ));
 TokenDisplay.displayName = 'TokenDisplay';
 
-// Self-contained input field that manages its own state to prevent parent re-renders
-const InputField = React.memo(({ onSubmit, isProcessing, onInputChange }: {
-  onSubmit: (value: string) => void;
-  isProcessing: boolean;
-  onInputChange?: (value: string) => void;
-}) => {
-  const [localValue, setLocalValue] = useState('');
 
-  const handleChange = useCallback((value: string) => {
-    setLocalValue(value);
-    onInputChange?.(value);
-  }, [onInputChange]);
-
-  const handleSubmit = useCallback(() => {
-    if (localValue.trim() && !isProcessing) {
-      onSubmit(localValue);
-      setLocalValue('');
-    }
-  }, [localValue, isProcessing, onSubmit]);
-
-  // Clear input when processing starts (for commands)
-  useEffect(() => {
-    if (isProcessing && localValue === '') {
-      // Input was already cleared by handleSubmit
-    }
-  }, [isProcessing, localValue]);
-
-  return (
-    <Box borderStyle="round" borderColor="cyan" paddingX={1} marginX={2} marginBottom={1}>
-      <Text color="cyan" bold>› </Text>
-      <TextInput
-        value={localValue}
-        onChange={handleChange}
-        onSubmit={handleSubmit}
-        placeholder={isProcessing ? "Processing..." : "Type your message..."}
-        showCursor={!isProcessing}
-        focus={true}
-      />
-    </Box>
-  );
-});
-InputField.displayName = 'InputField';
-
-const TaskListView = React.memo(({ tasks }: { tasks: Task[] }) => (
-  <Box flexDirection="column" borderStyle="single" borderColor="blue" paddingX={1} marginX={2} marginBottom={1}>
-    <Text color="blue" bold>Tasks:</Text>
-    {tasks.map(task => (
-      <Text key={task.id} color={task.completed ? 'green' : 'yellow'}>
-        {task.completed ? '✓' : '○'} {task.description}
-      </Text>
-    ))}
-  </Box>
-));
-TaskListView.displayName = 'TaskListView';
-
-// Memoized messages area to prevent header/footer flickering
-const MessagesArea = React.memo(({ messages, debugMode }: { messages: Message[]; debugMode: boolean }) => (
-  <Box flexDirection="column" flexGrow={1} paddingX={2} paddingY={1} overflow="hidden">
-    {messages.length === 0 ? (
-      <Box flexDirection="column">
-        <Text color="cyan">Welcome to KITTY! 🐱</Text>
-        <Text dimColor>Type your message below or /help for commands</Text>
-      </Box>
-    ) : (
-      messages.map((msg) => (
-        <MessageItem key={msg.id} msg={msg} debugMode={debugMode} />
-      ))
-    )}
-  </Box>
-));
-MessagesArea.displayName = 'MessagesArea';
 
 // Memoized message component to prevent re-rendering on input changes
 const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: boolean }) => {
@@ -179,8 +104,9 @@ MessageItem.displayName = 'MessageItem';
 
 export function Chat({ agent, debugMode = false }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, setTasks] = useState<TaskType[]>([]);
   const [initialized, setInitialized] = useState(false);
   const [tokenSpeed, setTokenSpeed] = useState<number>(0);
   const [lastTokenCount, setLastTokenCount] = useState<{ session: number; total: number }>({ session: 0, total: 0 });
@@ -189,7 +115,6 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   // Keyboard control state
   const lastCtrlCTime = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const inputFieldRef = useRef<{ clear: () => void } | null>(null);
 
   // Token tracking for streaming
   const streamStartTime = useRef<number>(0);
@@ -312,8 +237,8 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
     // Store pending update
     pendingUpdate.current = safeContent;
 
-    // Throttle updates to every 200ms to reduce flickering
-    if (now - lastUpdateTime.current >= 200) {
+    // Throttle updates to every 250ms to reduce flickering and allow text selection
+    if (now - lastUpdateTime.current >= 250) {
       lastUpdateTime.current = now;
       setMessages(prev => {
         if (prev.length === 0) {
@@ -382,7 +307,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
           pendingUpdate.current = null;
         }
         updateTimeout.current = null;
-      }, 2000);
+      }, 250);
     }
   }, [logToFile]);
 
@@ -423,9 +348,12 @@ Ctrl+C (twice) - Exit application`);
     }
   }, [agent, addMessage, setMessages]);
 
-  const handleSubmit = useCallback(async (input: string) => {
-    const trimmed = input.trim();
+  const handleSubmit = useCallback(async (value: string) => {
+    const trimmed = value.trim();
     if (!trimmed || isProcessing) return;
+
+    // Clear input immediately
+    setInput('');
 
     setIsProcessing(true);
     streamStartTime.current = Date.now();
@@ -564,35 +492,8 @@ Ctrl+C (twice) - Exit application`);
     }
   }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
 
-  // Memoize the visible messages to prevent recalculating on every render
+  // Limit visible messages to last 50
   const visibleMessages = useMemo(() => messages.slice(-50), [messages]);
-
-  // Memoize the entire static UI (everything except input) to prevent re-renders when typing
-  const staticUI = useMemo(() => (
-    <>
-      {/* Header with KITTY ASCII art and version */}
-      <Header />
-
-      {/* Messages area - scrollable - memoized to prevent flickering */}
-      <MessagesArea messages={visibleMessages} debugMode={debugMode} />
-
-      {/* Task view - positioned above input - memoized */}
-      {tasks.length > 0 && (
-        <TaskListView tasks={tasks} />
-      )}
-    </>
-  ), [visibleMessages, debugMode, tasks]);
-
-  // Memoize the bottom UI (token display and footer) separately
-  const bottomUI = useMemo(() => (
-    <>
-      {/* Token count under input field */}
-      <TokenDisplay session={lastTokenCount.session} total={lastTokenCount.total} />
-
-      {/* Footer help text */}
-      <Footer />
-    </>
-  ), [lastTokenCount.session, lastTokenCount.total]);
 
   if (!initialized) {
     return (
@@ -604,15 +505,61 @@ Ctrl+C (twice) - Exit application`);
 
   return (
     <Box flexDirection="column" height="100%">
-      {staticUI}
+      {/* Header with KITTY ASCII art and version */}
+      <Header />
 
-      {/* Input field - manages its own state to prevent parent re-renders */}
-      <InputField
-        onSubmit={handleSubmit}
-        isProcessing={isProcessing}
-      />
+      {/* Messages area - use Static for completed messages to prevent re-renders */}
+      <Box flexDirection="column" flexGrow={1} paddingX={2} paddingY={1} overflow="hidden">
+        {visibleMessages.length === 0 ? (
+          <Box flexDirection="column">
+            <Text color="cyan">Welcome to KITTY! 🐱</Text>
+            <Text dimColor>Type your message below or /help for commands</Text>
+          </Box>
+        ) : (
+          <>
+            {/* Render all completed messages (all but last) with Static to prevent re-renders */}
+            {visibleMessages.length > 1 && (
+              <Static items={visibleMessages.slice(0, -1)}>
+                {(msg, idx) => (
+                  <Box key={msg.id} flexDirection="column" marginBottom={1}>
+                    <MessageItem msg={msg} debugMode={debugMode} />
+                  </Box>
+                )}
+              </Static>
+            )}
 
-      {bottomUI}
+            {/* Render the last (potentially streaming) message separately */}
+            {visibleMessages.length > 0 && (
+              <Box flexDirection="column" marginBottom={1}>
+                <MessageItem msg={visibleMessages[visibleMessages.length - 1]} debugMode={debugMode} />
+              </Box>
+            )}
+          </>
+        )}
+      </Box>
+
+      {/* Task view - positioned above input */}
+      {tasks.length > 0 && debugMode && (
+        <Box marginX={2} marginBottom={1}>
+          <TaskList tasks={tasks} />
+        </Box>
+      )}
+
+      {/* Input field using CommandInput component */}
+      <Box borderStyle="round" borderColor="cyan" paddingX={1} marginX={2} marginBottom={1}>
+        <CommandInput
+          input={input}
+          onInputChange={setInput}
+          onSubmit={handleSubmit}
+          placeholder={isProcessing ? "Processing..." : "Type your message..."}
+        />
+      </Box>
+
+      {/* Token count under input field */}
+      <TokenDisplay session={lastTokenCount.session} total={lastTokenCount.total} />
+
+      {/* Footer help text */}
+      <Footer />
     </Box>
   );
 }
