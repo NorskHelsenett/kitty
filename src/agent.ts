@@ -400,7 +400,7 @@ export class AIAgent {
     userMessage: string,
     onTextChunk?: (text: string) => void
   ): Promise<void> {
-    const baseSystemMessage = 'You are a helpful AI assistant. Format responses using Markdown. Keep responses concise and clear.';
+    const baseSystemMessage = 'You are a helpful AI assistant. Format responses using Markdown. Keep responses concise and clear. Always provide a complete and full response, even for simple questions.';
     const sessionAwareBase = this.buildSystemPrompt(baseSystemMessage);
     const systemContent = this.projectContext
       ? buildSystemMessageWithContext(this.projectContext, sessionAwareBase)

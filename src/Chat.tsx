@@ -91,6 +91,22 @@ MessageItem.displayName = 'MessageItem';
 export function Chat({ agent, debugMode = false }: ChatProps) {
   const [messages, dispatch] = useReducer(messagesReducer, [
     {
+      id: 'header',
+      role: 'assistant',
+      content: `$$\\   $$\\ $$$$$$\\ $$$$$$$$\\ $$$$$$$$\\ $$\\     $$\\ 
+$$ | $$  |\\_$$  _|\\__$$  __|\\__$$  __|\\$$\\   $$  |
+$$ |$$  /   $$ |     $$ |      $$ |    \\$$\\ $$  / 
+$$$$$  /    $$ |     $$ |      $$ |     \\$$$$  /  
+$$  $$<     $$ |     $$ |      $$ |      \\$$  /   
+$$ |\\$$\\    $$ |     $$ |      $$ |       $$ |    
+$$ | \\$$\\ $$$$$$\\    $$ |      $$ |       $$ |    
+\\__|  \\__|\\______|   \\__|      \\__|       \\__|    
+                                                  
+                                                  
+                                                  `,
+      timestamp: Date.now(),
+    },
+    {
       id: 'welcome',
       role: 'assistant',
       content: 'Welcome to KITTY! 🐱\nType your message below or /help for commands',
@@ -300,10 +316,11 @@ Ctrl+C (twice) - Exit application`);
 
       abortControllerRef.current = new AbortController();
 
-      await agent.chat(
+      const chatPromise = agent.chat(
         trimmed,
         // Text streaming callback
         (text: string) => {
+          if (!text) return; // Do not process empty chunks
           fullResponse += text;
           logToFile(`STREAM_CHUNK: +${text.length} chars, total=${fullResponse.length}`);
 
@@ -337,6 +354,12 @@ Ctrl+C (twice) - Exit application`);
           }
         }
       );
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Request timed out after 60 seconds')), 60000)
+      );
+
+      await Promise.race([chatPromise, timeoutPromise]);
 
       // If no response was received, show a message
       if (!assistantMessageAdded) {
@@ -384,6 +407,9 @@ Ctrl+C (twice) - Exit application`);
     } finally {
       logToFile(`CHAT_END: isProcessing=${isProcessing}, messages.length=${messages.length}`);
 
+      // Flush any pending updates to ensure the last chunk is rendered
+      flushPendingUpdate();
+
       // Clear any pending update timeouts
       if (updateTimeout.current) {
         clearTimeout(updateTimeout.current);
@@ -393,17 +419,21 @@ Ctrl+C (twice) - Exit application`);
 
       setIsProcessing(false);
       abortControllerRef.current = null;
-
-      // Force layout reposition after processing completes
-      setLayoutKey(prev => prev + 1);
     }
   }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
 
-  // Limit visible messages to last 50
-  const visibleMessages = useMemo(() => messages.slice(-50), [messages]);
-  // Memoize sliced messages to prevent re-renders
-  const staticMessages = useMemo(() => visibleMessages.slice(0, -1), [visibleMessages]);
-  const lastMessage = useMemo(() => visibleMessages.length > 0 ? visibleMessages[visibleMessages.length - 1] : null, [visibleMessages]);
+  const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  const isStreaming = isProcessing && lastMessage?.role === 'assistant';
+
+  const staticMessages = useMemo(() => {
+    const msgs = messages.slice(-50);
+    return isStreaming ? msgs.slice(0, -1) : msgs;
+  }, [messages, isStreaming]);
+
+  const streamingMessage = useMemo(() => {
+    return isStreaming ? lastMessage : null;
+  }, [isStreaming, lastMessage]);
+
 
   if (!initialized) {
     return (
@@ -415,58 +445,58 @@ Ctrl+C (twice) - Exit application`);
 
   return (
     <Box flexDirection="column" height="100%">
-      <Box flexDirection="column" flexGrow={1}>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
         {/* Messages area */}
         <Box flexDirection="column" paddingX={2} paddingY={1}>
-          <>
-            {/* Render all completed messages (all but last) with Static to prevent re-renders */}
-            {staticMessages.length > 0 && (
-              <Static items={staticMessages}>
-                {(msg) => (
-                  <Box key={msg.id} flexDirection="column" marginBottom={1}>
-                    <MessageItem msg={msg} debugMode={debugMode} />
-                  </Box>
-                )}
-              </Static>
-            )}
-            {/* Render the last (potentially streaming) message separately */}
-            {lastMessage && (
-              <Box flexDirection="column" marginBottom={1}>
-                <MessageItem msg={lastMessage} debugMode={debugMode} />
-              </Box>
-            )}
-          </>
+          {/* Render static messages */}
+          {staticMessages.length > 0 && (
+            <Static items={staticMessages}>
+              {(msg) => (
+                <Box key={msg.id} flexDirection="column" marginBottom={1}>
+                  <MessageItem msg={msg} debugMode={debugMode} />
+                </Box>
+              )}
+            </Static>
+          )}
+          {/* Render streaming message */}
+          {streamingMessage && (
+            <Box key={streamingMessage.id} flexDirection="column" marginBottom={1}>
+              <MessageItem msg={streamingMessage} debugMode={debugMode} />
+            </Box>
+          )}
         </Box>
       </Box>
 
-      {/* Task view - positioned above input */}
-      {tasks.length > 0 && debugMode && (
-        <Box marginX={2} marginBottom={1}>
-          <TaskList tasks={tasks} />
+      <Box flexDirection="column" flexShrink={0}>
+        {/* Task view - positioned above input */}
+        {tasks.length > 0 && debugMode && (
+          <Box marginX={2} marginBottom={1}>
+            <TaskList tasks={tasks} />
+          </Box>
+        )}
+
+        {/* Input field using CommandInput component */}
+        <Box key={`input-${layoutKey}`}>
+          <CommandInput
+            onSubmit={handleSubmit}
+            placeholder={isProcessing ? "Processing..." : "Type your message..."}
+            isDisabled={isProcessing}
+          />
         </Box>
-      )}
 
-      {/* Input field using CommandInput component */}
-      <Box key={`input-${layoutKey}`}>
-        <CommandInput
-          onSubmit={handleSubmit}
-          placeholder={isProcessing ? "Processing..." : "Type your message..."}
-          isDisabled={isProcessing}
-        />
-      </Box>
+        {/* Token count under input field */}
+        <Box paddingX={2} paddingBottom={1}>
+          <Text dimColor color="gray">
+            Session: {lastTokenCount.session.toLocaleString()} tokens • Total: {lastTokenCount.total.toLocaleString()} tokens
+          </Text>
+        </Box>
 
-      {/* Token count under input field */}
-      <Box paddingX={2} paddingBottom={1}>
-        <Text dimColor color="gray">
-          Session: {lastTokenCount.session.toLocaleString()} tokens • Total: {lastTokenCount.total.toLocaleString()} tokens
-        </Text>
-      </Box>
-
-      {/* Footer help text */}
-      <Box paddingX={2} paddingBottom={1}>
-        <Text dimColor>
-          ESC: Cancel • Ctrl+C (x2): Exit • /help: Commands
-        </Text>
+        {/* Footer help text */}
+        <Box paddingX={2} paddingBottom={1}>
+          <Text dimColor>
+            ESC: Cancel • Ctrl+C (x2): Exit • /help: Commands
+          </Text>
+        </Box>
       </Box>
     </Box>
   );
