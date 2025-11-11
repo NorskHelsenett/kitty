@@ -135,6 +135,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [modelItems, setModelItems] = useState<SelectionItem[]>([]);
   const [messagesInitialized, setMessagesInitialized] = useState(false);
+  const [clearInputField, setClearInputField] = useState(false);
   const { exit } = useApp();
 
   // Keyboard control state
@@ -218,13 +219,16 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
       }
     } else if (key.ctrl && input === 'c') {
       const now = Date.now();
-      if (now - lastCtrlCTime.current < 5000) {
+      if (now - lastCtrlCTime.current < 2000) {
         // Second Ctrl+C within 5 seconds - exit
         exit();
       } else {
-        // First Ctrl+C - set timer and show prompt
+        // First Ctrl+C - set timer, show prompt, and clear input field
         lastCtrlCTime.current = now;
         setShowExitPrompt(true);
+        setClearInputField(true);
+        // Reset the clear flag after a moment
+        setTimeout(() => setClearInputField(false), 100);
       }
     }
   });
@@ -595,6 +599,7 @@ Ctrl+C (twice) - Exit application`);
             onSubmit={handleSubmit}
             placeholder={isProcessing ? "Processing..." : "Type your message..."}
             isDisabled={isProcessing}
+            clearInput={clearInputField}
           />
         </Box>
 

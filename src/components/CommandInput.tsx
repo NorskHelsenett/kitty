@@ -10,6 +10,7 @@ interface CommandInputProps {
   onSubmit: (value: string) => void;
   placeholder?: string;
   isDisabled?: boolean;
+  clearInput?: boolean;
 }
 
 const AVAILABLE_COMMANDS: CommandSuggestion[] = [
@@ -21,17 +22,19 @@ const AVAILABLE_COMMANDS: CommandSuggestion[] = [
   { command: '/help', description: 'Show this help message' },
 ];
 
-export function CommandInput({ onSubmit, placeholder, isDisabled = false }: CommandInputProps) {
+export function CommandInput({ onSubmit, placeholder, isDisabled = false, clearInput = false }: CommandInputProps) {
   const [input, setInput] = useState('');
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  // Clear input when disabled (after submission)
+  // Clear input when disabled (after submission) or when clearInput prop is true
   React.useEffect(() => {
-    if (isDisabled && input) {
+    if ((isDisabled && input) || clearInput) {
       setInput('');
+      setShowSuggestions(false);
+      setSelectedSuggestionIndex(0);
     }
-  }, [isDisabled, input]);
+  }, [isDisabled, input, clearInput]);
 
   // Get filtered suggestions based on current input
   const getSuggestions = (): CommandSuggestion[] => {
