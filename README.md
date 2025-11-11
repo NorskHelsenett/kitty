@@ -12,21 +12,11 @@ A terminal-first AI chat client with agent and plugin support, rendered with Ink
 
 </div>
 
-## Table of Contents
+## Quick Install
 
-- [Features](#features)
-- [Quick Chat Snapshot](#quick-chat-snapshot)
-- [How to Install](#how-to-install)
-- [How to Use](#how-to-use)
-  - [Interactive TUI](#interactive-tui)
-  - [Interactive with Debug Details](#interactive-with-debug-details)
-  - [Non-interactive (pipe or direct query)](#non-interactive-pipe-or-direct-query)
-  - [Slash Commands](#slash-commands)
-  - [Plugin and Agent CLIs](#plugin-and-agent-clis)
-- [Project Context](#project-context)
-- [Development Scripts](#development-scripts)
-- [Contributing](#contributing)
-- [License](#license)
+```bash
+npm install -g norskhelsenett-kitty
+```
 
 ## Features
 
