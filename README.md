@@ -162,8 +162,21 @@ See `package.json` for the complete list, including version bump and additional 
 
 ## Contributing
 
-Issues and pull requests are welcome. Please include reproduction steps and note whether you ran Kitty in standard or debug mode when reporting UI behaviour.
+Issues and pull requests are welcome. We encourage community contributions to improve Kitty!
+
+When reporting issues:
+- Include reproduction steps
+- Note whether you ran Kitty in standard or debug mode
+- Share any relevant logs from `--debug` mode if applicable
 
 ## License
 
-MIT
+This project is licensed under the **MIT License** – a permissive open-source license that allows you to:
+
+- Use Kitty freely in personal and commercial projects
+- Modify and distribute the software
+- Include it in proprietary applications
+
+See [LICENSE](./LICENSE) for the full license text.
+
+**Attribution appreciated but not required.** We're happy to have you use and build upon Kitty!
