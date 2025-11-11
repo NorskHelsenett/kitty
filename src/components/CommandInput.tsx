@@ -7,10 +7,9 @@ export interface CommandSuggestion {
 }
 
 interface CommandInputProps {
-  input: string;
-  onInputChange: (value: string) => void;
   onSubmit: (value: string) => void;
   placeholder?: string;
+  isDisabled?: boolean;
 }
 
 const AVAILABLE_COMMANDS: CommandSuggestion[] = [
@@ -23,9 +22,17 @@ const AVAILABLE_COMMANDS: CommandSuggestion[] = [
   { command: '/clear', description: 'Clear conversation history' },
 ];
 
-export function CommandInput({ input, onInputChange, onSubmit, placeholder }: CommandInputProps) {
+export function CommandInput({ onSubmit, placeholder, isDisabled = false }: CommandInputProps) {
+  const [input, setInput] = useState('');
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Clear input when disabled (after submission)
+  React.useEffect(() => {
+    if (isDisabled && input) {
+      setInput('');
+    }
+  }, [isDisabled, input]);
 
   // Get filtered suggestions based on current input
   const getSuggestions = (): CommandSuggestion[] => {
@@ -39,7 +46,7 @@ export function CommandInput({ input, onInputChange, onSubmit, placeholder }: Co
     }
 
     const query = input.toLowerCase();
-    return AVAILABLE_COMMANDS.filter(cmd => 
+    return AVAILABLE_COMMANDS.filter(cmd =>
       cmd.command.toLowerCase().startsWith(query)
     );
   };
@@ -47,6 +54,8 @@ export function CommandInput({ input, onInputChange, onSubmit, placeholder }: Co
   const suggestions = getSuggestions();
 
   useInput((inputChar, key) => {
+    // Don't handle input if disabled
+    if (isDisabled) return;
     // Handle special keys when suggestions are shown
     if (suggestions.length > 0 && input.startsWith('/')) {
       if (key.upArrow) {
@@ -69,7 +78,7 @@ export function CommandInput({ input, onInputChange, onSubmit, placeholder }: Co
         // Tab completion
         const suggestion = suggestions[selectedSuggestionIndex];
         if (suggestion) {
-          onInputChange(suggestion.command);
+          setInput(suggestion.command);
           setSelectedSuggestionIndex(0);
           setShowSuggestions(false);
         }
@@ -79,18 +88,19 @@ export function CommandInput({ input, onInputChange, onSubmit, placeholder }: Co
       if (key.return) {
         // Check if input is an exact match to a command
         const isExactMatch = AVAILABLE_COMMANDS.some(cmd => cmd.command === input);
-        
+
         if (isExactMatch) {
           // Submit the command and hide suggestions
           onSubmit(input);
+          setInput('');
           setShowSuggestions(false);
           setSelectedSuggestionIndex(0);
           return;
         }
-        
+
         // If a suggestion is selected and shown, use it
         if (showSuggestions && suggestions[selectedSuggestionIndex]) {
-          onInputChange(suggestions[selectedSuggestionIndex].command);
+          setInput(suggestions[selectedSuggestionIndex].command);
           setShowSuggestions(false);
           return;
         }
@@ -100,6 +110,7 @@ export function CommandInput({ input, onInputChange, onSubmit, placeholder }: Co
     // Handle normal text input
     if (key.return) {
       onSubmit(input);
+      setInput('');
       setShowSuggestions(false);
       setSelectedSuggestionIndex(0);
       return;
@@ -107,7 +118,7 @@ export function CommandInput({ input, onInputChange, onSubmit, placeholder }: Co
 
     if (key.backspace || key.delete) {
       const newInput = input.slice(0, -1);
-      onInputChange(newInput);
+      setInput(newInput);
       setSelectedSuggestionIndex(0);
       setShowSuggestions(newInput.startsWith('/'));
       return;
@@ -115,7 +126,7 @@ export function CommandInput({ input, onInputChange, onSubmit, placeholder }: Co
 
     if (inputChar && !key.ctrl && !key.meta) {
       const newInput = input + inputChar;
-      onInputChange(newInput);
+      setInput(newInput);
       setSelectedSuggestionIndex(0);
       setShowSuggestions(newInput.startsWith('/'));
     }
@@ -127,7 +138,7 @@ export function CommandInput({ input, onInputChange, onSubmit, placeholder }: Co
       <Box>
         <Text bold color="greenBright">❯ </Text>
         <Text>{input}</Text>
-        <Text color="greenBright">█</Text>
+        {!isDisabled && <Text color="greenBright">█</Text>}
         {input.length === 0 && placeholder && (
           <Text dimColor>{placeholder}</Text>
         )}
