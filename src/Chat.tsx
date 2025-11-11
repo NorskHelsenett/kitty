@@ -102,6 +102,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [initialized, setInitialized] = useState(false);
   const [tokenSpeed, setTokenSpeed] = useState<number>(0);
   const [lastTokenCount, setLastTokenCount] = useState<{ session: number; total: number }>({ session: 0, total: 0 });
+  const [layoutKey, setLayoutKey] = useState(0);
   const { exit } = useApp();
 
   // Keyboard control state
@@ -392,6 +393,9 @@ Ctrl+C (twice) - Exit application`);
 
       setIsProcessing(false);
       abortControllerRef.current = null;
+
+      // Force layout reposition after processing completes
+      setLayoutKey(prev => prev + 1);
     }
   }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
 
@@ -443,11 +447,13 @@ Ctrl+C (twice) - Exit application`);
       )}
 
       {/* Input field using CommandInput component */}
-      <CommandInput
-        onSubmit={handleSubmit}
-        placeholder={isProcessing ? "Processing..." : "Type your message..."}
-        isDisabled={isProcessing}
-      />
+      <Box key={`input-${layoutKey}`}>
+        <CommandInput
+          onSubmit={handleSubmit}
+          placeholder={isProcessing ? "Processing..." : "Type your message..."}
+          isDisabled={isProcessing}
+        />
+      </Box>
 
       {/* Token count under input field */}
       <Box paddingX={2} paddingBottom={1}>
