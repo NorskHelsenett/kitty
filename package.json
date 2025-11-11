@@ -8,18 +8,18 @@
     "kitty": "./dist/index.js"
   },
   "scripts": {
-    "dev": "bun run src/index.ts",
-    "build": "bun build src/index.ts --outdir dist --target node",
+    "dev": "node dist/index.js",
+    "build": "tsc",
     "build:release": "bash scripts/build-release.sh",
-    "start": "bun run dist/index.js",
-    "repl": "bun run examples/repl.ts",
-    "demo": "bun run examples/simple-cli.ts",
-    "demo:agent": "bun run examples/agent-demo.ts",
-    "test:orchestrator": "bun run test-orchestrator.ts",
-    "test:external-code": "bun run test-external-code.ts",
-    "plugin:list": "bun run src/index.ts plugin list",
-    "plugin:install": "bun run src/index.ts plugin install",
-    "agent:demo": "bun run examples/agent-demo.ts",
+    "start": "node dist/index.js",
+    "repl": "ts-node examples/repl.ts",
+    "demo": "ts-node examples/simple-cli.ts",
+    "demo:agent": "ts-node examples/agent-demo.ts",
+    "test:orchestrator": "ts-node test-orchestrator.ts",
+    "test:external-code": "ts-node test-external-code.ts",
+    "plugin:list": "ts-node src/index.ts plugin list",
+    "plugin:install": "ts-node src/index.ts plugin install",
+    "agent:demo": "ts-node examples/agent-demo.ts",
     "install:global": "./install-global.sh",
     "version:patch": "npm version patch",
     "version:minor": "npm version minor",
@@ -42,7 +42,7 @@
     "ink-text-input": "^6.0.0",
     "js-tiktoken": "^1.0.21",
     "js-yaml": "^4.1.0",
-    "marked": "^16.4.2",
+    "marked": "^15.0.12",
     "marked-terminal": "^7.3.0",
     "openai": "^6.8.1",
     "react": "^19.2.0"
@@ -52,7 +52,8 @@
     "@types/marked-terminal": "^6.1.1",
     "@types/node": "^24.10.0",
     "@types/react": "^19.2.2",
-    "bun-types": "latest",
-    "react-devtools-core": "^7.0.1"
+    "react-devtools-core": "^6.1.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
   }
 }

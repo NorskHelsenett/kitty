@@ -406,7 +406,7 @@ export class AgentManager {
 
           // Handle remaining property chain after array index
           if (restPath) {
-            const props = restPath.split('.').filter(p => p);
+            const props = restPath.split('.').filter(Boolean);
             for (const prop of props) {
               if (value === undefined) break;
               value = value[prop];

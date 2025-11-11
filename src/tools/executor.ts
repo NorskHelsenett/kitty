@@ -2,7 +2,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { isPathIgnored, filterIgnoredPaths } from './gitignore-utils';
+import { isPathIgnored, filterIgnoredPaths } from './gitignore-utils.js';
 import { Tool } from '../plugins.js';
 
 const execAsync = promisify(exec);

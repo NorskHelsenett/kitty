@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 import { ChatUI } from './ui.js';
 import { AIAgent } from './agent.js';
 import { PluginManager } from './plugin-manager.js';
-import { AgentManager, type AgentWorkflow } from './agent-manager.js';
+import { AgentManager, type AgentWorkflow, type AgentModelConfig } from './agent-manager.js';
 import type { Tool } from './plugins.js';
 import { config } from './config.js';
 import * as fs from 'fs';
@@ -84,7 +84,8 @@ if (isDebugMode) {
 function debugLog(data: any) {
   if (debugFile) {
     const timestamp = new Date().toISOString();
-    const logEntry = `[${timestamp}] ${JSON.stringify(data, null, 2)}\n`;
+    const logEntry = `[${timestamp}] ${JSON.stringify(data, null, 2)}
+`;
     fs.appendFileSync(debugFile, logEntry);
   }
 }
@@ -94,7 +95,7 @@ function formatPreview(text: string, limit: number = 1000): string {
   if (text.length <= limit) return text;
   const truncated = text.slice(0, limit);
   const remaining = text.length - limit;
-  return `${truncated}\n... [truncated ${remaining} characters]`;
+  return `${truncated}\n... [truncated ${remaining} characters]`
 }
 
 function logDebugMessage(
@@ -280,7 +281,7 @@ Guidelines:
 
   const handleThinking = (step: ThinkingStep) => {
     if (!isDebugMode) return;
-    logDebugMessage('Agent Step', `[${step.type.toUpperCase()}] ${step.content}`, step);
+    logDebugMessage('Agent Step', `[${step.type.toUpperCase()}] ${step.content}`, step as unknown as Record<string, unknown>);
   };
 
   const handleToolUse = (tool: { name?: string; input?: any }) => {
@@ -506,7 +507,7 @@ async function runAgentCommand() {
 
         console.log(`Running agent: ${agentName}`);
 
-        const modelConfig = workflow.model || {};
+        const modelConfig: Partial<AgentModelConfig> = workflow.model || {};
         const modelName = modelConfig.name || config.getDefaultModel();
         const modelApiKey = modelConfig.apiKey || config.getApiKey();
         const modelBaseURL = modelConfig.baseURL || config.getBaseURL();

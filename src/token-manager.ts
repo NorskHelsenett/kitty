@@ -106,7 +106,7 @@ export class TokenManager {
     // Count tool calls if present
     if ('tool_calls' in message && message.tool_calls) {
       for (const toolCall of message.tool_calls) {
-        if (toolCall.function) {
+        if (toolCall.type === 'function' && toolCall.function) {
           tokens += this.encoder.encode(toolCall.function.name).length;
           tokens += this.encoder.encode(toolCall.function.arguments).length;
           tokens += 3; // Function call overhead
@@ -260,6 +260,6 @@ export class TokenManager {
    * Clean up encoder resources
    */
   dispose() {
-    this.encoder.free();
+    // this.encoder.free();
   }
 }

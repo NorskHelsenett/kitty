@@ -182,4 +182,4 @@ export {
   filterIgnoredPaths, 
   reloadGitignore, 
   resetGitignoreChecker 
-} from './gitignore-utils';
+} from './gitignore-utils.js';
