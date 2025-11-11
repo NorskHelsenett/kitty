@@ -1,6 +1,6 @@
 {
   "name": "@norskhelsenett/kitty",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Beautiful TUI terminal AI chat client with agent capabilities",
   "type": "module",
   "main": "dist/index.js",
