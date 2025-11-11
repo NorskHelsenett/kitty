@@ -72,24 +72,48 @@ const TokenDisplay = React.memo(({ session, total }: { session: number; total: n
 ));
 TokenDisplay.displayName = 'TokenDisplay';
 
-const InputField = ({ value, onChange, onSubmit, isProcessing }: {
-  value: string;
-  onChange: (value: string) => void;
-  onSubmit: () => void;
+// Self-contained input field that manages its own state to prevent parent re-renders
+const InputField = React.memo(({ onSubmit, isProcessing, onInputChange }: {
+  onSubmit: (value: string) => void;
   isProcessing: boolean;
-}) => (
-  <Box borderStyle="round" borderColor="cyan" paddingX={1} marginX={2} marginBottom={1}>
-    <Text color="cyan" bold>› </Text>
-    <TextInput
-      value={value}
-      onChange={onChange}
-      onSubmit={onSubmit}
-      placeholder={isProcessing ? "Processing..." : "Type your message..."}
-      showCursor={!isProcessing}
-      focus={true}
-    />
-  </Box>
-);
+  onInputChange?: (value: string) => void;
+}) => {
+  const [localValue, setLocalValue] = useState('');
+
+  const handleChange = useCallback((value: string) => {
+    setLocalValue(value);
+    onInputChange?.(value);
+  }, [onInputChange]);
+
+  const handleSubmit = useCallback(() => {
+    if (localValue.trim() && !isProcessing) {
+      onSubmit(localValue);
+      setLocalValue('');
+    }
+  }, [localValue, isProcessing, onSubmit]);
+
+  // Clear input when processing starts (for commands)
+  useEffect(() => {
+    if (isProcessing && localValue === '') {
+      // Input was already cleared by handleSubmit
+    }
+  }, [isProcessing, localValue]);
+
+  return (
+    <Box borderStyle="round" borderColor="cyan" paddingX={1} marginX={2} marginBottom={1}>
+      <Text color="cyan" bold>› </Text>
+      <TextInput
+        value={localValue}
+        onChange={handleChange}
+        onSubmit={handleSubmit}
+        placeholder={isProcessing ? "Processing..." : "Type your message..."}
+        showCursor={!isProcessing}
+        focus={true}
+      />
+    </Box>
+  );
+});
+InputField.displayName = 'InputField';
 
 const TaskListView = React.memo(({ tasks }: { tasks: Task[] }) => (
   <Box flexDirection="column" borderStyle="single" borderColor="blue" paddingX={1} marginX={2} marginBottom={1}>
@@ -102,6 +126,23 @@ const TaskListView = React.memo(({ tasks }: { tasks: Task[] }) => (
   </Box>
 ));
 TaskListView.displayName = 'TaskListView';
+
+// Memoized messages area to prevent header/footer flickering
+const MessagesArea = React.memo(({ messages, debugMode }: { messages: Message[]; debugMode: boolean }) => (
+  <Box flexDirection="column" flexGrow={1} paddingX={2} paddingY={1} overflow="hidden">
+    {messages.length === 0 ? (
+      <Box flexDirection="column">
+        <Text color="cyan">Welcome to KITTY! 🐱</Text>
+        <Text dimColor>Type your message below or /help for commands</Text>
+      </Box>
+    ) : (
+      messages.map((msg) => (
+        <MessageItem key={msg.id} msg={msg} debugMode={debugMode} />
+      ))
+    )}
+  </Box>
+));
+MessagesArea.displayName = 'MessagesArea';
 
 // Memoized message component to prevent re-rendering on input changes
 const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: boolean }) => {
@@ -138,7 +179,6 @@ MessageItem.displayName = 'MessageItem';
 
 export function Chat({ agent, debugMode = false }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [initialized, setInitialized] = useState(false);
@@ -149,6 +189,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   // Keyboard control state
   const lastCtrlCTime = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const inputFieldRef = useRef<{ clear: () => void } | null>(null);
 
   // Token tracking for streaming
   const streamStartTime = useRef<number>(0);
@@ -232,10 +273,9 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
         // Second Ctrl+C within 5 seconds - exit
         exit();
       } else {
-        // First Ctrl+C - clear input and set timer
+        // First Ctrl+C - set timer (input field manages its own state now)
         lastCtrlCTime.current = now;
-        setInput(''); // Clear the input field
-        addMessage('system', 'Input cleared. Press Ctrl+C again within 5 seconds to exit');
+        addMessage('system', 'Press Ctrl+C again within 5 seconds to exit');
       }
     }
   });
@@ -272,8 +312,8 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
     // Store pending update
     pendingUpdate.current = safeContent;
 
-    // Throttle updates to every 100ms for smoother streaming
-    if (now - lastUpdateTime.current >= 100) {
+    // Throttle updates to every 200ms to reduce flickering
+    if (now - lastUpdateTime.current >= 200) {
       lastUpdateTime.current = now;
       setMessages(prev => {
         if (prev.length === 0) {
@@ -313,7 +353,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
       // Capture the content value in the closure to avoid race conditions
       const contentToUpdate = safeContent;
 
-      // Schedule update for later
+      // Schedule update for later (match throttle timing)
       updateTimeout.current = setTimeout(() => {
         if (contentToUpdate && contentToUpdate.length > 0) {
           lastUpdateTime.current = Date.now();
@@ -342,7 +382,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
           pendingUpdate.current = null;
         }
         updateTimeout.current = null;
-      }, 100);
+      }, 2000);
     }
   }, [logToFile]);
 
@@ -383,11 +423,10 @@ Ctrl+C (twice) - Exit application`);
     }
   }, [agent, addMessage, setMessages]);
 
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = useCallback(async (input: string) => {
     const trimmed = input.trim();
     if (!trimmed || isProcessing) return;
 
-    setInput('');
     setIsProcessing(true);
     streamStartTime.current = Date.now();
     streamTokenCount.current = 0;
@@ -523,11 +562,37 @@ Ctrl+C (twice) - Exit application`);
       setIsProcessing(false);
       abortControllerRef.current = null;
     }
-  }, [input, isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
+  }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
 
   // Memoize the visible messages to prevent recalculating on every render
   const visibleMessages = useMemo(() => messages.slice(-50), [messages]);
 
+  // Memoize the entire static UI (everything except input) to prevent re-renders when typing
+  const staticUI = useMemo(() => (
+    <>
+      {/* Header with KITTY ASCII art and version */}
+      <Header />
+
+      {/* Messages area - scrollable - memoized to prevent flickering */}
+      <MessagesArea messages={visibleMessages} debugMode={debugMode} />
+
+      {/* Task view - positioned above input - memoized */}
+      {tasks.length > 0 && (
+        <TaskListView tasks={tasks} />
+      )}
+    </>
+  ), [visibleMessages, debugMode, tasks]);
+
+  // Memoize the bottom UI (token display and footer) separately
+  const bottomUI = useMemo(() => (
+    <>
+      {/* Token count under input field */}
+      <TokenDisplay session={lastTokenCount.session} total={lastTokenCount.total} />
+
+      {/* Footer help text */}
+      <Footer />
+    </>
+  ), [lastTokenCount.session, lastTokenCount.total]);
 
   if (!initialized) {
     return (
@@ -539,41 +604,15 @@ Ctrl+C (twice) - Exit application`);
 
   return (
     <Box flexDirection="column" height="100%">
-      {/* Header with KITTY ASCII art and version */}
-      <Header />
+      {staticUI}
 
-      {/* Messages area - scrollable */}
-      <Box flexDirection="column" flexGrow={1} paddingX={2} paddingY={1} overflow="hidden">
-        {visibleMessages.length === 0 ? (
-          <Box flexDirection="column">
-            <Text color="cyan">Welcome to KITTY! 🐱</Text>
-            <Text dimColor>Type your message below or /help for commands</Text>
-          </Box>
-        ) : (
-          visibleMessages.map((msg) => (
-            <MessageItem key={msg.id} msg={msg} debugMode={debugMode} />
-          ))
-        )}
-      </Box>
-
-      {/* Task view - positioned above input - memoized */}
-      {tasks.length > 0 && (
-        <TaskListView tasks={tasks} />
-      )}
-
-      {/* Input field */}
+      {/* Input field - manages its own state to prevent parent re-renders */}
       <InputField
-        value={input}
-        onChange={setInput}
         onSubmit={handleSubmit}
         isProcessing={isProcessing}
       />
 
-      {/* Token count under input field */}
-      <TokenDisplay session={lastTokenCount.session} total={lastTokenCount.total} />
-
-      {/* Footer help text */}
-      <Footer />
+      {bottomUI}
     </Box>
   );
 }
