@@ -98,6 +98,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
       id: 'header',
       role: 'none',
       content: `
+
 ██╗  ██╗██╗████████╗████████╗██╗   ██╗
 ██║ ██╔╝██║╚══██╔══╝╚══██╔══╝╚██╗ ██╔╝
 █████╔╝ ██║   ██║      ██║    ╚████╔╝ 
@@ -105,7 +106,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
 ██║  ██╗██║   ██║      ██║      ██║   
 ╚═╝  ╚═╝╚═╝   ╚═╝      ╚═╝      ╚═╝   
 Welcome to KITTY - Your AI-powered assistant!  
-                                                  
+                v0.1.0                                  
                                                   
                                                   `,
       timestamp: Date.now(),
