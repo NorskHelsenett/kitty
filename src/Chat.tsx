@@ -32,24 +32,22 @@ interface ChatProps {
   debugMode?: boolean;
 }
 
-
-
 // Memoized message component to prevent re-rendering on input changes
 const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: boolean }) => {
   const content = msg.content || '';
   const isThinking = msg.role === 'thinking';
   const color = msg.role === 'user' ? 'cyan' :
     msg.role === 'assistant' ? 'green' :
-      msg.role === 'thinking' ? 'gray' :
-        'yellow';
+    msg.role === 'thinking' ? 'gray' :
+    'yellow';
   const prefix = msg.role === 'user' ? '› ' :
     msg.role === 'assistant' ? '● ' :
-      msg.role === 'thinking' ? '○○○ ' :
-        '• ';
+    msg.role === 'thinking' ? '○○○ ' :
+    '• ';
   const label = msg.role === 'user' ? 'You' :
     msg.role === 'assistant' ? 'KITTY' :
-      msg.role === 'thinking' ? `Thinking (${msg.thinkingType || 'processing'})` :
-        'System';
+    msg.role === 'thinking' ? `Thinking (${msg.thinkingType || 'processing'})` :
+    'System';
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -65,7 +63,6 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
   );
 });
 MessageItem.displayName = 'MessageItem';
-
 
 export function Chat({ agent, debugMode = false }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([
@@ -135,24 +132,6 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
     })();
   }, []);
 
-  // Token speed update effect - disabled to reduce flickering
-  // useEffect(() => {
-  //   if (isProcessing) {
-  //     const interval = setInterval(() => {
-  //       const elapsed = (Date.now() - streamStartTime.current) / 1000;
-  //       if (elapsed > 0) {
-  //         const currentUsage = agent.getTokenUsage();
-  //         const speed = currentUsage.currentTokens / elapsed;
-  //         setTokenSpeed(speed);
-  //       }
-  //     }, 200);
-
-  //     return () => clearInterval(interval);
-  //   } else {
-  //     setTokenSpeed(0);
-  //   }
-  // }, [isProcessing, agent]);
-
   // Handle keyboard input
   useInput((input, key) => {
     // Don't interfere with text input
@@ -172,6 +151,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
       } else {
         // First Ctrl+C - set timer (input field manages its own state now)
         lastCtrlCTime.current = now;
+        input && setInput("");
         addMessage('system', 'Press Ctrl+C again within 5 seconds to exit');
       }
     }
@@ -572,263 +552,74 @@ Ctrl+C (twice) - Exit application`);
 
   }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
 
-
-
   // Limit visible messages to last 50
-
-
-
   const visibleMessages = useMemo(() => messages.slice(-50), [messages]);
-
-
-
   // Memoize sliced messages to prevent re-renders
-
   const staticMessages = useMemo(() => visibleMessages.slice(0, -1), [visibleMessages]);
-
   const lastMessage = useMemo(() => visibleMessages.length > 0 ? visibleMessages[visibleMessages.length - 1] : null, [visibleMessages]);
 
-
-
   if (!initialized) {
-
     return (
-
       <Box padding={1}>
-
         <Text>Initializing...</Text>
-
       </Box>
-
     );
-
   }
 
-
-
   return (
-
-
-
     <Box flexDirection="column" height="100%">
-
-
-
       <Box flexDirection="column" flexGrow={1}>
-
-
-
         {/* Messages area */}
-
-
-
         <Box flexDirection="column" paddingX={2} paddingY={1}>
-
-
-
           <>
-
-
-
             {/* Render all completed messages (all but last) with Static to prevent re-renders */}
-
-
-
             {staticMessages.length > 0 && (
-
-
-
               <Static items={staticMessages}>
-
-
-
                 {(msg) => (
-
-
-
                   <Box key={msg.id} flexDirection="column" marginBottom={1}>
-
-
-
                     <MessageItem msg={msg} debugMode={debugMode} />
-
-
-
                   </Box>
-
-
-
                 )}
-
-
-
               </Static>
-
-
-
             )}
-
-
-
-
-
-
-
             {/* Render the last (potentially streaming) message separately */}
-
-
-
             {lastMessage && (
-
-
-
               <Box flexDirection="column" marginBottom={1}>
-
-
-
                 <MessageItem msg={lastMessage} debugMode={debugMode} />
-
-
-
               </Box>
-
-
-
             )}
-
-
-
           </>
-
-
-
         </Box>
-
-
-
       </Box>
-
-
-
-
-
-
 
       {/* Task view - positioned above input */}
-
-
-
       {tasks.length > 0 && debugMode && (
-
-
-
         <Box marginX={2} marginBottom={1}>
-
-
-
           <TaskList tasks={tasks} />
-
-
-
         </Box>
-
-
-
       )}
 
-
-
-
-
-
-
       {/* Input field using CommandInput component */}
-
-
-
       <CommandInput
-
-
-
         input={input}
-
-
-
         onInputChange={setInput}
-
-
-
         onSubmit={handleSubmit}
-
-
-
         placeholder={isProcessing ? "Processing..." : "Type your message..."}
-
-
-
       />
 
-
-
-
-
-
-
       {/* Token count under input field */}
-
-
-
       <Box paddingX={2} paddingBottom={1}>
-
-
-
         <Text dimColor color="gray">
-
-
-
           Session: {lastTokenCount.session.toLocaleString()} tokens • Total: {lastTokenCount.total.toLocaleString()} tokens
-
-
-
         </Text>
-
-
-
       </Box>
-
-
-
-
-
-
 
       {/* Footer help text */}
-
-
-
       <Box paddingX={2} paddingBottom={1}>
-
-
-
         <Text dimColor>
-
-
-
           ESC: Cancel • Ctrl+C (x2): Exit • /help: Commands
-
-
-
         </Text>
-
-
-
       </Box>
-
-
-
     </Box>
-
-
-
   );
 }
