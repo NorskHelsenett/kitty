@@ -62,7 +62,8 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
     return <Text>{msg.content}</Text>;
   }
 
-  const content = msg.content || '';
+  // Normalize content: replace 3+ consecutive newlines with just 2 newlines (one blank line)
+  const content = (msg.content || '').replace(/\n{3,}/g, '\n\n');
   const isThinking = msg.role === 'thinking';
   const color = msg.role === 'user' ? 'cyan' :
     msg.role === 'assistant' ? 'green' :
@@ -83,7 +84,7 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
         {prefix}{label}
       </Text>
       {content && content.trim().length > 0 ? (
-        <Text color={color} dimColor={isThinking}>{content}</Text>
+        <Text color={color} dimColor={isThinking} wrap="wrap">{content}</Text>
       ) : (
         debugMode && <Text dimColor>(no content - {content.length} chars)</Text>
       )}
