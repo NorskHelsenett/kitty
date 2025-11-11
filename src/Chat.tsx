@@ -40,10 +40,10 @@ type MessageAction =
   | { type: 'CLEAR' };
 
 // Version string - updated automatically by release workflow
-const APP_VERSION = 'v0.5.0';
+const APP_VERSION = 'v0.1.0';
 
 // Initial messages shown on startup and after clear
-const getInitialMessages = (): Message[] => [
+const getInitialMessages = (modelName: string = 'Loading...', currentPath: string = ''): Message[] => [
   {
     id: 'header',
     role: 'none',
@@ -56,8 +56,8 @@ const getInitialMessages = (): Message[] => [
 ██║  ██╗██║   ██║      ██║      ██║
 ╚═╝  ╚═╝╚═╝   ╚═╝      ╚═╝      ╚═╝
 Welcome to KITTY -  Your AI-powered assistant!
-    ${APP_VERSION}       •          {{modelname}}
-{{currentPath}}
+    ${APP_VERSION}       •        ${modelName}
+${currentPath}
                                                   `,
     timestamp: Date.now(),
   },
@@ -80,6 +80,8 @@ const messagesReducer = (state: Message[], action: MessageAction): Message[] => 
       }
       const updated = state.slice(0, -1);
       return [...updated, { ...state[state.length - 1], content: action.content }];
+    case 'CLEAR':
+      return [];
     default:
       return state;
   }
@@ -132,6 +134,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [layoutKey, setLayoutKey] = useState(0);
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [modelItems, setModelItems] = useState<SelectionItem[]>([]);
+  const [messagesInitialized, setMessagesInitialized] = useState(false);
   const { exit } = useApp();
 
   // Keyboard control state
@@ -182,9 +185,25 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
         return true;
       });
 
+      // Update the header message with actual model name and current path
+      if (!messagesInitialized) {
+        const modelName = agent.getCurrentModel();
+        const currentPath = process.cwd();
+
+        const updatedMessages = getInitialMessages(modelName, currentPath);
+
+        // Clear existing messages and add the new ones with proper information
+        dispatch({ type: 'CLEAR' });
+        updatedMessages.forEach(msg => {
+          dispatch({ type: 'ADD', message: msg });
+        });
+
+        setMessagesInitialized(true);
+      }
+
       setInitialized(true);
     })();
-  }, []);
+  }, [messagesInitialized]);
 
   // Handle keyboard input
   useInput((input, key) => {
