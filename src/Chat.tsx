@@ -220,8 +220,10 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
     } else if (key.ctrl && input === 'c') {
       const now = Date.now();
       if (now - lastCtrlCTime.current < 2000) {
-        // Second Ctrl+C within 5 seconds - exit
+        // Second Ctrl+C within 2 seconds - exit the app
         exit();
+        // Also explicitly exit the process to ensure clean shutdown
+        setTimeout(() => process.exit(0), 50);
       } else {
         // First Ctrl+C - set timer, show prompt, and clear input field
         lastCtrlCTime.current = now;
