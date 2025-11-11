@@ -39,6 +39,9 @@ type MessageAction =
   | { type: 'UPDATE_LAST'; content: string }
   | { type: 'CLEAR' };
 
+// Version string - updated automatically by release workflow
+const APP_VERSION = 'v0.1.0';
+
 // Initial messages shown on startup and after clear
 const getInitialMessages = (): Message[] => [
   {
@@ -53,7 +56,7 @@ const getInitialMessages = (): Message[] => [
 ██║  ██╗██║   ██║      ██║      ██║
 ╚═╝  ╚═╝╚═╝   ╚═╝      ╚═╝      ╚═╝
 Welcome to KITTY -  Your AI-powered assistant!
-    v0.1.0       •          {{modelname}}
+    ${APP_VERSION}       •          {{modelname}}
 {{currentPath}}
                                                   `,
     timestamp: Date.now(),
