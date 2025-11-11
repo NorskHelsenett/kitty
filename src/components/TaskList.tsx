@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import chalk from 'chalk';
 
 export interface Task {
   id: string;
@@ -18,11 +19,13 @@ export function TaskList({ tasks }: TaskListProps) {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1} borderStyle="round" borderColor="blue">
-      <Text bold color="blue" dimColor={false}>Tasks:</Text>
+      <Text bold color="blue" dimColor={false}>TASKS:</Text>
       {tasks.map((task) => (
         <Box key={task.id} marginLeft={1}>
           <Text color={task.completed ? 'green' : 'yellow'} dimColor={task.completed}>
-            {task.completed ? '✓' : '☐'} {task.description}
+            {task.completed
+              ? `☒ ${chalk.strikethrough(task.description)}`
+              : `☐ ${task.description}`}
           </Text>
         </Box>
       ))}

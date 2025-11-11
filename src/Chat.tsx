@@ -475,7 +475,7 @@ Ctrl+C (twice) - Exit application`);
 
       <Box flexDirection="column" flexShrink={0}>
         {/* Task view - positioned above input */}
-        {tasks.length > 0 && debugMode && (
+        {tasks.length > 0 && (
           <Box marginX={2} marginBottom={1}>
             <TaskList tasks={tasks} />
           </Box>
