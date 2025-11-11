@@ -32,41 +32,6 @@ interface ChatProps {
   debugMode?: boolean;
 }
 
-const KITTY_ASCII = `
-╦╔═╦═╗╔╦╗╔╦╗╦ ╦
-╠╩╗║ ║ ║  ║ ╚╦╝
-╩ ╩╩ ╩ ╩  ╩  ╩
-`;
-
-// Memoized components to prevent unnecessary re-renders
-const Header = React.memo(() => (
-  <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={0}>
-    <Text color="cyan" bold>{KITTY_ASCII.trim()}</Text>
-    <Box justifyContent="center">
-      <Text color="gray" dimColor>v1.0.0</Text>
-    </Box>
-  </Box>
-));
-Header.displayName = 'Header';
-
-const Footer = React.memo(() => (
-  <Box paddingX={2} paddingBottom={1}>
-    <Text dimColor>
-      ESC: Cancel • Ctrl+C (x2): Exit • /help: Commands
-    </Text>
-  </Box>
-));
-Footer.displayName = 'Footer';
-
-const TokenDisplay = React.memo(({ session, total }: { session: number; total: number }) => (
-  <Box paddingX={2} paddingBottom={1}>
-    <Text dimColor color="gray">
-      Session: {session.toLocaleString()} tokens • Total: {total.toLocaleString()} tokens
-    </Text>
-  </Box>
-));
-TokenDisplay.displayName = 'TokenDisplay';
-
 
 
 // Memoized message component to prevent re-rendering on input changes
@@ -103,7 +68,14 @@ MessageItem.displayName = 'MessageItem';
 
 
 export function Chat({ agent, debugMode = false }: ChatProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: 'welcome',
+      role: 'assistant',
+      content: 'Welcome to KITTY! 🐱\nType your message below or /help for commands',
+      timestamp: Date.now(),
+    }
+  ]);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [tasks, setTasks] = useState<TaskType[]>([]);
@@ -222,11 +194,8 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
 
   const updateLastMessage = useCallback((content: string) => {
     const now = Date.now();
-
-    // Guard against null/undefined content
     const safeContent = content || '';
 
-    // Don't process empty updates
     if (safeContent.length === 0) {
       logToFile('UPDATE_LAST_MESSAGE: Ignoring empty update');
       return;
@@ -234,81 +203,50 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
 
     logToFile(`UPDATE_LAST_MESSAGE: contentLength=${safeContent.length}`);
 
-    // Store pending update
     pendingUpdate.current = safeContent;
 
-    // Throttle updates to every 250ms to reduce flickering and allow text selection
-    if (now - lastUpdateTime.current >= 250) {
-      lastUpdateTime.current = now;
-      setMessages(prev => {
-        if (prev.length === 0) {
-          logToFile('UPDATE_LAST_MESSAGE: No messages to update!');
-          return prev;
-        }
-        const newMessages = [...prev];
-
-        // Find the last assistant message (skip thinking messages)
-        let lastAssistantIdx = -1;
-        for (let i = newMessages.length - 1; i >= 0; i--) {
-          if (newMessages[i].role === 'assistant') {
-            lastAssistantIdx = i;
-            break;
-          }
-        }
-
-        if (lastAssistantIdx === -1) {
-          logToFile('UPDATE_LAST_MESSAGE: No assistant message found to update!');
-          return prev;
-        }
-
-        newMessages[lastAssistantIdx] = {
-          ...newMessages[lastAssistantIdx],
-          content: safeContent
-        };
-        logToFile(`UPDATE_LAST_MESSAGE: Updated assistant msg at ${lastAssistantIdx}, newLength=${safeContent.length}`);
-        return newMessages;
-      });
-      pendingUpdate.current = null;
-
-      if (updateTimeout.current) {
-        clearTimeout(updateTimeout.current);
-        updateTimeout.current = null;
-      }
-    } else if (!updateTimeout.current) {
-      // Capture the content value in the closure to avoid race conditions
-      const contentToUpdate = safeContent;
-
-      // Schedule update for later (match throttle timing)
-      updateTimeout.current = setTimeout(() => {
-        if (contentToUpdate && contentToUpdate.length > 0) {
-          lastUpdateTime.current = Date.now();
-          setMessages(prev => {
-            if (prev.length === 0) return prev;
-            const newMessages = [...prev];
-
-            // Find the last assistant message (skip thinking messages)
-            let lastAssistantIdx = -1;
-            for (let i = newMessages.length - 1; i >= 0; i--) {
-              if (newMessages[i].role === 'assistant') {
-                lastAssistantIdx = i;
-                break;
+    if (now - lastUpdateTime.current < 120) {
+      if (!updateTimeout.current) {
+        updateTimeout.current = setTimeout(() => {
+          const pendingContent = pendingUpdate.current;
+          if (pendingContent) {
+            setMessages(prev => {
+              if (prev.length === 0 || prev[prev.length - 1].role !== 'assistant') {
+                return prev;
               }
-            }
-
-            if (lastAssistantIdx === -1) return prev;
-
-            newMessages[lastAssistantIdx] = {
-              ...newMessages[lastAssistantIdx],
-              content: contentToUpdate
-            };
-            logToFile(`UPDATE_LAST_MESSAGE(delayed): Updated assistant msg at ${lastAssistantIdx}, newLength=${contentToUpdate.length}`);
-            return newMessages;
-          });
-          pendingUpdate.current = null;
-        }
-        updateTimeout.current = null;
-      }, 250);
+              const newMessages = [...prev];
+              newMessages[newMessages.length - 1] = {
+                ...newMessages[newMessages.length - 1],
+                content: pendingContent,
+              };
+              return newMessages;
+            });
+          }
+          updateTimeout.current = null;
+        }, 120);
+      }
+      return;
     }
+
+    lastUpdateTime.current = now;
+    if (updateTimeout.current) {
+      clearTimeout(updateTimeout.current);
+      updateTimeout.current = null;
+    }
+
+    setMessages(prev => {
+      if (prev.length === 0 || prev[prev.length - 1].role !== 'assistant') {
+        logToFile('UPDATE_LAST_MESSAGE: No assistant message to update.');
+        return prev;
+      }
+      const newMessages = [...prev];
+      newMessages[newMessages.length - 1] = {
+        ...newMessages[newMessages.length - 1],
+        content: safeContent,
+      };
+      logToFile(`UPDATE_LAST_MESSAGE: Updated last message with content length ${safeContent.length}`);
+      return newMessages;
+    });
   }, [logToFile]);
 
   const addTask = useCallback((description: string): string => {
@@ -348,195 +286,375 @@ Ctrl+C (twice) - Exit application`);
     }
   }, [agent, addMessage, setMessages]);
 
-  const handleSubmit = useCallback(async (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed || isProcessing) return;
+    const handleSubmit = useCallback(async (value: string) => {
 
-    // Clear input immediately
-    setInput('');
+      const trimmed = value.trim();
 
-    setIsProcessing(true);
-    streamStartTime.current = Date.now();
-    streamTokenCount.current = 0;
+      if (!trimmed || isProcessing) return;
 
-    addMessage('user', trimmed);
-    logToFile(`USER: ${trimmed}`);
+  
 
-    // Handle slash commands
-    if (trimmed.startsWith('/')) {
-      await handleCommand(trimmed);
-      setIsProcessing(false);
-      return;
-    }
+      // Clear input immediately
 
-    try {
-      let fullResponse = '';
-      let assistantMessageAdded = false;
-      let currentTaskId: string | null = null;
+      setInput('');
 
-      abortControllerRef.current = new AbortController();
+  
 
-      await agent.chat(
-        trimmed,
-        // Text streaming callback
-        (text: string) => {
-          fullResponse += text;
-          logToFile(`STREAM_CHUNK: +${text.length} chars, total=${fullResponse.length}`);
+      setIsProcessing(true);
 
-          if (!assistantMessageAdded) {
-            logToFile(`ASSISTANT_FIRST_MSG: Creating assistant message with ${fullResponse.length} chars`);
-            addMessage('assistant', fullResponse);
-            assistantMessageAdded = true;
-          } else {
-            updateLastMessage(fullResponse);
+      streamStartTime.current = Date.now();
+
+      streamTokenCount.current = 0;
+
+  
+
+      addMessage('user', trimmed);
+
+      logToFile(`USER: ${trimmed}`);
+
+  
+
+      // Handle slash commands
+
+      if (trimmed.startsWith('/')) {
+
+        await handleCommand(trimmed);
+
+        setIsProcessing(false);
+
+        return;
+
+      }
+
+  
+
+      try {
+
+        let fullResponse = '';
+
+        let assistantMessageAdded = false;
+
+        let currentTaskId: string | null = null;
+
+  
+
+        abortControllerRef.current = new AbortController();
+
+  
+
+        await agent.chat(
+
+          trimmed,
+
+          // Text streaming callback
+
+          (text: string) => {
+
+            fullResponse += text;
+
+            logToFile(`STREAM_CHUNK: +${text.length} chars, total=${fullResponse.length}`);
+
+  
+
+            if (!assistantMessageAdded) {
+
+              logToFile(`ASSISTANT_FIRST_MSG: Creating assistant message with ${fullResponse.length} chars`);
+
+              addMessage('assistant', fullResponse);
+
+              assistantMessageAdded = true;
+
+            } else {
+
+              updateLastMessage(fullResponse);
+
+            }
+
+          },
+
+          // Tool call callback
+
+          (tool: any) => {
+
+            const taskDesc = `${tool.name}${tool.input?.path ? `: ${tool.input.path}` : ''}`;
+
+            currentTaskId = addTask(taskDesc);
+
+          },
+
+          // Tool result callback
+
+          (result: any) => {
+
+            if (currentTaskId) {
+
+              completeTask(currentTaskId);
+
+              currentTaskId = null;
+
+            }
+
+          },
+
+          // Waiting callback
+
+          () => {},
+
+          // Thinking callback
+
+          (step: any) => {
+
+            if (step && step.content) {
+
+              logToFile(`THINKING: type=${step.type}, content="${step.content.substring(0, 100)}"`);
+
+              addMessage('thinking', step.content, step.type);
+
+            }
+
           }
-        },
-        // Tool call callback
-        (tool: any) => {
-          const taskDesc = `${tool.name}${tool.input?.path ? `: ${tool.input.path}` : ''}`;
-          currentTaskId = addTask(taskDesc);
-        },
-        // Tool result callback
-        (result: any) => {
-          if (currentTaskId) {
-            completeTask(currentTaskId);
-            currentTaskId = null;
+
+        );
+
+  
+
+        // If no response was received, show a message
+
+        if (!assistantMessageAdded) {
+
+          logToFile('CHAT_COMPLETE: No response was received from AI');
+
+          addMessage('system', 'No response received from AI');
+
+        } else {
+
+          logToFile(`CHAT_COMPLETE: Response completed, final length: ${fullResponse.length}`);
+
+          logToFile(`FINAL_RESPONSE: ${fullResponse}`);
+
+  
+
+          // Force one final update to ensure we have the complete response
+
+          // This bypasses throttling to guarantee the last content is shown
+
+          if (fullResponse.length > 0) {
+
+            setMessages(prev => {
+
+              const newMessages = [...prev];
+
+              let lastAssistantIdx = -1;
+
+              for (let i = newMessages.length - 1; i >= 0; i--) {
+
+                if (newMessages[i].role === 'assistant') {
+
+                  lastAssistantIdx = i;
+
+                  break;
+
+                }
+
+              }
+
+              if (lastAssistantIdx !== -1) {
+
+                newMessages[lastAssistantIdx] = {
+
+                  ...newMessages[lastAssistantIdx],
+
+                  content: fullResponse
+
+                };
+
+                logToFile(`FINAL_UPDATE: Forced final update with ${fullResponse.length} chars`);
+
+              }
+
+              return newMessages;
+
+            });
+
           }
-        },
-        // Waiting callback
-        () => {},
-        // Thinking callback
-        (step: any) => {
-          if (step && step.content) {
-            logToFile(`THINKING: type=${step.type}, content="${step.content.substring(0, 100)}"`);
-            addMessage('thinking', step.content, step.type);
-          }
+
+  
+
+          // Update token count after response completes
+
+          const finalUsage = agent.getTokenUsage();
+
+          const contextTokenCount = agent.getProjectContext()?.content
+
+            ? agent.getTokenManager().countMessageTokens({
+
+                role: 'system',
+
+                content: agent.getProjectContext()?.content || ''
+
+              })
+
+            : 0;
+
+          setLastTokenCount({
+
+            session: finalUsage.currentTokens,
+
+            total: finalUsage.currentTokens + contextTokenCount
+
+          });
+
         }
+
+  
+
+        // Clear tasks after a delay
+
+        if (tasks.length > 0) {
+
+          setTimeout(() => clearTasks(), 2000);
+
+        }
+
+  
+
+      } catch (error: any) {
+
+        if (error.name !== 'AbortError') {
+
+          // Show full error details for debugging
+
+          const errorMsg = error.message || String(error);
+
+          const errorStack = error.stack || '';
+
+          logToFile(`ERROR: ${errorMsg}\nStack: ${errorStack}`);
+
+          addMessage('system', `Error: ${errorMsg}`);
+
+  
+
+          // Log full error to help debug
+
+          console.error('Chat error:', error);
+
+        } else {
+
+          logToFile('CHAT_ABORTED: User cancelled the request');
+
+        }
+
+      } finally {
+
+        logToFile(`CHAT_END: isProcessing=${isProcessing}, messages.length=${messages.length}`);
+
+  
+
+        // Clear any pending update timeouts
+
+        if (updateTimeout.current) {
+
+          clearTimeout(updateTimeout.current);
+
+          updateTimeout.current = null;
+
+          logToFile('CLEANUP: Cleared pending update timeout');
+
+        }
+
+  
+
+        setIsProcessing(false);
+
+        abortControllerRef.current = null;
+
+      }
+
+    }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
+
+  
+
+      // Limit visible messages to last 50
+
+  
+
+      const visibleMessages = useMemo(() => messages.slice(-50), [messages]);
+
+  
+
+    // Memoize sliced messages to prevent re-renders
+
+    const staticMessages = useMemo(() => visibleMessages.slice(0, -1), [visibleMessages]);
+
+    const lastMessage = useMemo(() => visibleMessages.length > 0 ? visibleMessages[visibleMessages.length - 1] : null, [visibleMessages]);
+
+  
+
+    if (!initialized) {
+
+      return (
+
+        <Box padding={1}>
+
+          <Text>Initializing...</Text>
+
+        </Box>
+
       );
 
-      // If no response was received, show a message
-      if (!assistantMessageAdded) {
-        logToFile('CHAT_COMPLETE: No response was received from AI');
-        addMessage('system', 'No response received from AI');
-      } else {
-        logToFile(`CHAT_COMPLETE: Response completed, final length: ${fullResponse.length}`);
-        logToFile(`FINAL_RESPONSE: ${fullResponse}`);
-
-        // Force one final update to ensure we have the complete response
-        // This bypasses throttling to guarantee the last content is shown
-        if (fullResponse.length > 0) {
-          setMessages(prev => {
-            const newMessages = [...prev];
-            let lastAssistantIdx = -1;
-            for (let i = newMessages.length - 1; i >= 0; i--) {
-              if (newMessages[i].role === 'assistant') {
-                lastAssistantIdx = i;
-                break;
-              }
-            }
-            if (lastAssistantIdx !== -1) {
-              newMessages[lastAssistantIdx] = {
-                ...newMessages[lastAssistantIdx],
-                content: fullResponse
-              };
-              logToFile(`FINAL_UPDATE: Forced final update with ${fullResponse.length} chars`);
-            }
-            return newMessages;
-          });
-        }
-
-        // Update token count after response completes
-        const finalUsage = agent.getTokenUsage();
-        const contextTokenCount = agent.getProjectContext()?.content
-          ? agent.getTokenManager().countMessageTokens({
-              role: 'system',
-              content: agent.getProjectContext()?.content || ''
-            })
-          : 0;
-        setLastTokenCount({
-          session: finalUsage.currentTokens,
-          total: finalUsage.currentTokens + contextTokenCount
-        });
-      }
-
-      // Clear tasks after a delay
-      if (tasks.length > 0) {
-        setTimeout(() => clearTasks(), 2000);
-      }
-
-    } catch (error: any) {
-      if (error.name !== 'AbortError') {
-        // Show full error details for debugging
-        const errorMsg = error.message || String(error);
-        const errorStack = error.stack || '';
-        logToFile(`ERROR: ${errorMsg}\nStack: ${errorStack}`);
-        addMessage('system', `Error: ${errorMsg}`);
-
-        // Log full error to help debug
-        console.error('Chat error:', error);
-      } else {
-        logToFile('CHAT_ABORTED: User cancelled the request');
-      }
-    } finally {
-      logToFile(`CHAT_END: isProcessing=${isProcessing}, messages.length=${messages.length}`);
-
-      // Clear any pending update timeouts
-      if (updateTimeout.current) {
-        clearTimeout(updateTimeout.current);
-        updateTimeout.current = null;
-        logToFile('CLEANUP: Cleared pending update timeout');
-      }
-
-      setIsProcessing(false);
-      abortControllerRef.current = null;
     }
-  }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks.length, handleCommand]);
 
-  // Limit visible messages to last 50
-  const visibleMessages = useMemo(() => messages.slice(-50), [messages]);
+  
 
-  if (!initialized) {
     return (
-      <Box padding={1}>
-        <Text>Initializing...</Text>
-      </Box>
-    );
-  }
 
-  return (
-    <Box flexDirection="column" height="100%">
-      {/* Header with KITTY ASCII art and version */}
-      <Header />
+      <Box flexDirection="column">
 
-      {/* Messages area - use Static for completed messages to prevent re-renders */}
-      <Box flexDirection="column" flexGrow={1} paddingX={2} paddingY={1} overflow="hidden">
-        {visibleMessages.length === 0 ? (
-          <Box flexDirection="column">
-            <Text color="cyan">Welcome to KITTY! 🐱</Text>
-            <Text dimColor>Type your message below or /help for commands</Text>
-          </Box>
-        ) : (
+        {/* Messages area - use Static for completed messages to prevent re-renders */}
+
+        <Box flexDirection="column" paddingX={2} paddingY={1}>
+
           <>
+
             {/* Render all completed messages (all but last) with Static to prevent re-renders */}
-            {visibleMessages.length > 1 && (
-              <Static items={visibleMessages.slice(0, -1)}>
-                {(msg, idx) => (
+
+            {staticMessages.length > 0 && (
+
+              <Static items={staticMessages}>
+
+                {(msg) => (
+
                   <Box key={msg.id} flexDirection="column" marginBottom={1}>
+
                     <MessageItem msg={msg} debugMode={debugMode} />
+
                   </Box>
+
                 )}
+
               </Static>
+
             )}
+
+  
 
             {/* Render the last (potentially streaming) message separately */}
-            {visibleMessages.length > 0 && (
+
+            {lastMessage && (
+
               <Box flexDirection="column" marginBottom={1}>
-                <MessageItem msg={visibleMessages[visibleMessages.length - 1]} debugMode={debugMode} />
+
+                <MessageItem msg={lastMessage} debugMode={debugMode} />
+
               </Box>
+
             )}
+
           </>
-        )}
-      </Box>
+
+        </Box>
+
+  
 
       {/* Task view - positioned above input */}
       {tasks.length > 0 && debugMode && (
@@ -546,20 +664,26 @@ Ctrl+C (twice) - Exit application`);
       )}
 
       {/* Input field using CommandInput component */}
-      <Box borderStyle="round" borderColor="cyan" paddingX={1} marginX={2} marginBottom={1}>
-        <CommandInput
-          input={input}
-          onInputChange={setInput}
-          onSubmit={handleSubmit}
-          placeholder={isProcessing ? "Processing..." : "Type your message..."}
-        />
-      </Box>
+      <CommandInput
+        input={input}
+        onInputChange={setInput}
+        onSubmit={handleSubmit}
+        placeholder={isProcessing ? "Processing..." : "Type your message..."}
+      />
 
       {/* Token count under input field */}
-      <TokenDisplay session={lastTokenCount.session} total={lastTokenCount.total} />
+      <Box paddingX={2} paddingBottom={1}>
+        <Text dimColor color="gray">
+          Session: {lastTokenCount.session.toLocaleString()} tokens • Total: {lastTokenCount.total.toLocaleString()} tokens
+        </Text>
+      </Box>
 
       {/* Footer help text */}
-      <Footer />
+      <Box paddingX={2} paddingBottom={1}>
+        <Text dimColor>
+          ESC: Cancel • Ctrl+C (x2): Exit • /help: Commands
+        </Text>
+      </Box>
     </Box>
   );
 }
