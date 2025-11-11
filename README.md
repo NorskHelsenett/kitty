@@ -65,7 +65,15 @@ npm run build
 
 **Step 2 (Optional): Install globally**
 
-To make `kitty` available on your PATH:
+To make `kitty` available on your PATH, you have two options:
+
+**Option A: Install from npm registry**
+
+```bash
+npm install -g norskhelsenett-kitty
+```
+
+**Option B: Install from source** (for development)
 
 ```bash
 npm install -g .
