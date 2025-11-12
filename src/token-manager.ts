@@ -64,7 +64,9 @@ export class TokenManager {
         };
       }
     } catch (error) {
-      console.error('Failed to fetch model info:', error);
+      // Don't log to console - let the caller handle the error
+      // console.error('Failed to fetch model info:', error);
+      throw error; // Re-throw so the caller can handle it appropriately
     }
 
     return null;

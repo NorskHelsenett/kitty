@@ -14,6 +14,11 @@ interface AgentSessionOptions {
   reasoningMode?: ReasoningMode;
 }
 
+export interface InitializationResult {
+  success: boolean;
+  warnings?: string[];
+}
+
 export class AIAgent {
   private client: OpenAI;
   private orchestrator: Orchestrator;
@@ -53,7 +58,9 @@ export class AIAgent {
     this.agentManager = new AgentManager();
   }
 
-  async initialize(): Promise<void> {
+  async initialize(): Promise<InitializationResult> {
+    const warnings: string[] = [];
+
     this.projectContext = await loadProjectContext();
 
     // Initialize plugin manager and load plugins
@@ -76,9 +83,44 @@ export class AIAgent {
       if (modelInfo && modelInfo.contextWindow > 0) {
         this.tokenManager.updateMaxTokens(modelInfo.contextWindow);
       }
-    } catch (error) {
-      console.error('Could not fetch model info, using default 128k context window');
+    } catch (error: any) {
+      // Don't log to console - we'll show user-friendly warnings in the UI instead
+      // console.error('Could not fetch model info, using default 128k context window');
+
+      // Add a user-friendly warning message with guidance
+      const errorCode = error?.code || error?.cause?.code;
+      const statusCode = error?.status || error?.statusCode;
+
+      if (errorCode === 'ECONNREFUSED' || errorCode === 'ENOTFOUND' ||
+          error?.message?.includes('ECONNREFUSED') || error?.message?.includes('ENOTFOUND')) {
+        warnings.push(
+          '⚠️  Could not connect to API server during initialization.\n' +
+          '   Using default settings (128k context window).\n\n' +
+          '💡 To fix this, ensure OPENAI_BASE_URL is set correctly:\n' +
+          '   Example: export OPENAI_BASE_URL=http://localhost:11434/v1\n\n' +
+          '   If you plan to use the chat feature, please verify your API server is running.'
+        );
+      } else if (statusCode === 401 || error?.message?.toLowerCase().includes('unauthorized')) {
+        warnings.push(
+          '⚠️  Authentication failed during initialization.\n' +
+          '   Using default settings (128k context window).\n\n' +
+          '💡 To fix this, ensure your API token is set correctly:\n' +
+          '   Example: export OPENAI_API_KEY=your-api-token-here'
+        );
+      } else {
+        warnings.push(
+          '⚠️  Could not connect to API server during initialization.\n' +
+          `   Error: ${error?.message || String(error)}\n` +
+          '   Using default settings (128k context window).\n\n' +
+          '💡 Please check your OPENAI_BASE_URL and OPENAI_API_KEY environment variables.'
+        );
+      }
     }
+
+    return {
+      success: true,
+      warnings: warnings.length > 0 ? warnings : undefined
+    };
   }
 
   getPluginManager(): PluginManager {

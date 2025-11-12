@@ -8,6 +8,7 @@ import { setConfirmationCallback } from './tools/executor.js';
 import { CommandInput } from './components/CommandInput.js';
 import { TaskList, Task as TaskType } from './components/TaskList.js';
 import { SelectionMenu, SelectionItem } from './components/SelectionMenu.js';
+import { ErrorDialog, ErrorDialogProps, getErrorDialogProps } from './components/ErrorDialog.js';
 
 // Configure marked for terminal output
 marked.use(markedTerminal({
@@ -136,6 +137,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [modelItems, setModelItems] = useState<SelectionItem[]>([]);
   const [messagesInitialized, setMessagesInitialized] = useState(false);
   const [clearInputField, setClearInputField] = useState(false);
+  const [errorDialog, setErrorDialog] = useState<ErrorDialogProps | null>(null);
   const { exit } = useApp();
 
   // Keyboard control state
@@ -178,33 +180,61 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
 
   useEffect(() => {
     (async () => {
-      await agent.initialize();
+      try {
+        const result = await agent.initialize();
 
-      // Set up tool confirmation callback
-      setConfirmationCallback(async (toolName: string, input: any, details?: string) => {
-        // For now, auto-approve all tools (we can add a confirmation UI later)
-        return true;
-      });
-
-      // Update the header message with actual model name and current path
-      if (!messagesInitialized) {
-        const modelName = agent.getCurrentModel();
-        const currentPath = process.cwd();
-
-        const updatedMessages = getInitialMessages(modelName, currentPath);
-
-        // Clear existing messages and add the new ones with proper information
-        dispatch({ type: 'CLEAR' });
-        updatedMessages.forEach(msg => {
-          dispatch({ type: 'ADD', message: msg });
+        // Set up tool confirmation callback
+        setConfirmationCallback(async (toolName: string, input: any, details?: string) => {
+          // For now, auto-approve all tools (we can add a confirmation UI later)
+          return true;
         });
 
-        setMessagesInitialized(true);
-      }
+        // Update the header message with actual model name and current path
+        if (!messagesInitialized) {
+          const modelName = agent.getCurrentModel();
+          const currentPath = process.cwd();
 
-      setInitialized(true);
+          const updatedMessages = getInitialMessages(modelName, currentPath);
+
+          // Clear existing messages and add the new ones with proper information
+          dispatch({ type: 'CLEAR' });
+          updatedMessages.forEach(msg => {
+            dispatch({ type: 'ADD', message: msg });
+          });
+
+          // Add any initialization warnings as system messages
+          if (result.warnings && result.warnings.length > 0) {
+            result.warnings.forEach(warning => {
+              const id = `warning-${Date.now()}-${messageIdCounter.current++}`;
+              dispatch({
+                type: 'ADD',
+                message: {
+                  id,
+                  role: 'system',
+                  content: warning,
+                  timestamp: Date.now()
+                }
+              });
+            });
+          }
+
+          setMessagesInitialized(true);
+        }
+
+        setInitialized(true);
+      } catch (error) {
+        // Show error dialog if initialization fails completely
+        const errorProps = getErrorDialogProps(error);
+        errorProps.onClose = () => {
+          setErrorDialog(null);
+          // Exit the app after closing the error dialog on initialization failure
+          exit();
+        };
+        setErrorDialog(errorProps);
+        setInitialized(true); // Set to true to render the error dialog
+      }
     })();
-  }, [messagesInitialized]);
+  }, [messagesInitialized, exit]);
 
   // Handle keyboard input
   useInput((input, key) => {
@@ -325,7 +355,9 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
         await agent.setModel(selectedModel);
         addMessage('system', `Model changed to: ${selectedModel}`);
       } catch (error) {
-        addMessage('system', `Failed to change model: ${error}`);
+        const errorProps = getErrorDialogProps(error);
+        errorProps.onClose = () => setErrorDialog(null);
+        setErrorDialog(errorProps);
       }
     }
     setShowModelMenu(false);
@@ -362,7 +394,9 @@ Ctrl+C (twice) - Exit application`);
         setModelItems(items);
         setShowModelMenu(true);
       } catch (error) {
-        addMessage('system', `Failed to load models: ${error}`);
+        const errorProps = getErrorDialogProps(error);
+        errorProps.onClose = () => setErrorDialog(null);
+        setErrorDialog(errorProps);
       }
     } else {
       addMessage('system', `Unknown command: ${command}`);
@@ -506,7 +540,12 @@ Ctrl+C (twice) - Exit application`);
         const errorMsg = error.message || String(error);
         const errorStack = error.stack || '';
         logToFile(`ERROR: ${errorMsg}\nStack: ${errorStack}`);
-        addMessage('system', `Error: ${errorMsg}`);
+
+        // Show error dialog instead of just adding a system message
+        const errorProps = getErrorDialogProps(error);
+        errorProps.onClose = () => setErrorDialog(null);
+        setErrorDialog(errorProps);
+
         console.error('Chat error:', error);
       } else {
         logToFile('CHAT_ABORTED: User cancelled the request');
@@ -548,6 +587,11 @@ Ctrl+C (twice) - Exit application`);
         <Text>Initializing...</Text>
       </Box>
     );
+  }
+
+  // Show error dialog if there's an error
+  if (errorDialog) {
+    return <ErrorDialog {...errorDialog} />;
   }
 
   // Show model selection menu if requested

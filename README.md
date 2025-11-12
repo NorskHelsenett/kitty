@@ -15,7 +15,7 @@ A terminal-first AI chat client with agent and plugin support, rendered with Ink
 ## Quick Install
 
 ```bash
-npm install -g norskhelsenett-kitty
+npm install -g @norskhelsenett/kitty
 ```
 
 ## Features
@@ -60,7 +60,7 @@ To make `kitty` available on your PATH, you have two options:
 **Option A: Install from npm registry**
 
 ```bash
-npm install -g norskhelsenett-kitty
+npm install -g @norskhelsenett/kitty
 ```
 
 **Option B: Install from source** (for development)
