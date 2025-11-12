@@ -18,44 +18,59 @@ export function ErrorDialog({ title, message, details, suggestion, onClose }: Er
   });
 
   return (
-    <Box flexDirection="column" padding={1} borderStyle="round" borderColor="red">
-      <Box marginBottom={1}>
-        <Text bold color="red">❌  {title}</Text>
-      </Box>
-
-      <Box marginBottom={1}>
-        <Text>{message}</Text>
-      </Box>
-
-      {details && (
-        <Box marginBottom={1} paddingX={2}>
-          <Text dimColor>{details}</Text>
+    <Box
+      flexDirection="column"
+      height="100%"
+      justifyContent="center"
+      alignItems="center"
+      paddingX={4}
+      paddingY={2}
+    >
+      <Box
+        flexDirection="column"
+        padding={2}
+        borderStyle="round"
+        borderColor="red"
+        width={70}
+      >
+        <Box marginBottom={1}>
+          <Text bold color="red">❌  {title}</Text>
         </Box>
-      )}
 
-      {suggestion && (
-        <Box
-          marginBottom={1}
-          paddingX={2}
-          paddingY={1}
-          borderStyle="single"
-          borderColor="yellow"
-        >
-          <Box flexDirection="column">
-            <Text bold color="yellow">💡 Suggestion:</Text>
-            <Text>{suggestion}</Text>
+        <Box marginBottom={1}>
+          <Text>{message}</Text>
+        </Box>
+
+        {details && (
+          <Box marginBottom={1} paddingX={2}>
+            <Text dimColor>{details}</Text>
           </Box>
-        </Box>
-      )}
+        )}
 
-      <Box marginTop={1} justifyContent="center">
-        <Text
-          bold
-          color="green"
-          inverse
-        >
-          {' Press any key to close '}
-        </Text>
+        {suggestion && (
+          <Box
+            marginBottom={1}
+            paddingX={2}
+            paddingY={1}
+            borderStyle="single"
+            borderColor="yellow"
+          >
+            <Box flexDirection="column">
+              <Text bold color="yellow">💡 Suggestion:</Text>
+              <Text>{suggestion}</Text>
+            </Box>
+          </Box>
+        )}
+
+        <Box marginTop={1} justifyContent="center">
+          <Text
+            bold
+            color="green"
+            inverse
+          >
+            {' Press any key to close '}
+          </Text>
+        </Box>
       </Box>
     </Box>
   );

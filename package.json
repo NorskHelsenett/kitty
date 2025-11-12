@@ -15,7 +15,8 @@
     "url": "https://github.com/NorskHelsenett/kitty"
   },
   "publishConfig": {
-    "registry": "https://registry.npmjs.org"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "scripts": {
     "dev": "node dist/index.js",

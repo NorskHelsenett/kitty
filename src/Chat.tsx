@@ -9,6 +9,7 @@ import { CommandInput } from './components/CommandInput.js';
 import { TaskList, Task as TaskType } from './components/TaskList.js';
 import { SelectionMenu, SelectionItem } from './components/SelectionMenu.js';
 import { ErrorDialog, ErrorDialogProps, getErrorDialogProps } from './components/ErrorDialog.js';
+import { WarningDialog } from './components/WarningDialog.js';
 
 // Configure marked for terminal output
 marked.use(markedTerminal({
@@ -138,6 +139,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [messagesInitialized, setMessagesInitialized] = useState(false);
   const [clearInputField, setClearInputField] = useState(false);
   const [errorDialog, setErrorDialog] = useState<ErrorDialogProps | null>(null);
+  const [warningMessage, setWarningMessage] = useState<string | null>(null);
   const { exit } = useApp();
 
   // Keyboard control state
@@ -202,20 +204,11 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
             dispatch({ type: 'ADD', message: msg });
           });
 
-          // Add any initialization warnings as system messages
+          // Show any initialization warnings in a floating dialog
           if (result.warnings && result.warnings.length > 0) {
-            result.warnings.forEach(warning => {
-              const id = `warning-${Date.now()}-${messageIdCounter.current++}`;
-              dispatch({
-                type: 'ADD',
-                message: {
-                  id,
-                  role: 'system',
-                  content: warning,
-                  timestamp: Date.now()
-                }
-              });
-            });
+            // Combine all warnings into one message
+            const warningText = result.warnings.join('\n\n');
+            setWarningMessage(warningText);
           }
 
           setMessagesInitialized(true);
@@ -546,7 +539,8 @@ Ctrl+C (twice) - Exit application`);
         errorProps.onClose = () => setErrorDialog(null);
         setErrorDialog(errorProps);
 
-        console.error('Chat error:', error);
+        // Don't log to console - error is shown in the UI dialog
+        // console.error('Chat error:', error);
       } else {
         logToFile('CHAT_ABORTED: User cancelled the request');
       }
@@ -586,6 +580,17 @@ Ctrl+C (twice) - Exit application`);
       <Box padding={1}>
         <Text>Initializing...</Text>
       </Box>
+    );
+  }
+
+  // Show warning dialog if there's a warning
+  if (warningMessage) {
+    return (
+      <WarningDialog
+        title="Connection Warning"
+        message={warningMessage}
+        onClose={() => setWarningMessage(null)}
+      />
     );
   }
 
