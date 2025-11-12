@@ -14,8 +14,9 @@ import { WarningDialog } from './components/WarningDialog.js';
 import { ConfirmationPrompt } from './components/ConfirmationPrompt.js';
 
 
-// Configure marked for terminal output
-marked.use(markedTerminal({
+// Configure marked for terminal output - will be reconfigured per message with terminal width
+// This is the default configuration
+const getMarkedTerminalConfig = (width: number = 80) => ({
   code: chalk.yellow,
   blockquote: chalk.gray.italic,
   heading: chalk.cyan.bold,
@@ -23,7 +24,14 @@ marked.use(markedTerminal({
   em: chalk.italic,
   codespan: chalk.yellow,
   link: chalk.blue.underline,
-}) as any);
+  width: width - 6, // Account for padding and prefix
+  reflowText: true,
+  // Compact paragraph spacing - single newline instead of double
+  paragraph: (text: string) => text + '\n',
+  // Simpler list formatting
+  list: (body: string) => body,
+  listitem: (text: string) => '  • ' + text.trimEnd() + '\n',
+});
 
 /**
  * Preprocesses markdown to ensure proper spacing:
@@ -128,6 +136,11 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
   const { stdout } = useStdout();
   const terminalWidth = stdout ? stdout.columns : 80;
   const contentWidth = terminalWidth - 6; // 2 paddingX on each side + 2 for prefix
+
+  // Configure marked for this specific message with proper terminal width
+  React.useEffect(() => {
+    marked.use(markedTerminal(getMarkedTerminalConfig(terminalWidth)) as any);
+  }, [terminalWidth]);
 
   if (msg.role === 'none') {
     return <Text>{msg.content}</Text>;
