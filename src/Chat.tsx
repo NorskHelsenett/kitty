@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, useReducer } from 'react';
-import { Box, Text, useInput, useApp, Static } from 'ink';
+import { Box, Text, useInput, useApp, Static, useStdout } from 'ink';
 import chalk from 'chalk';
 import { marked } from 'marked';
 import { markedTerminal } from 'marked-terminal';
+import wordWrap from 'word-wrap';
 import type { AIAgent } from './agent.js';
 import { setConfirmationCallback } from './tools/executor.js';
 import { CommandInput } from './components/CommandInput.js';
@@ -93,6 +94,10 @@ const messagesReducer = (state: Message[], action: MessageAction): Message[] => 
 
 // Memoized message component to prevent re-rendering on input changes
 const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: boolean }) => {
+  const { stdout } = useStdout();
+  const terminalWidth = stdout ? stdout.columns : 80;
+  const contentWidth = terminalWidth - 6; // 2 paddingX on each side + 2 for prefix
+
   if (msg.role === 'none') {
     return <Text>{msg.content}</Text>;
   }
@@ -102,6 +107,7 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
     const thinkingTags = ['think', 'reasoning', 'reason'];
     const tagPattern = new RegExp(`</?(${thinkingTags.join('|')})>`, 'g');
     const cleanContent = (msg.content || '').replace(tagPattern, '').trim();
+    const wrappedContent = wordWrap(cleanContent, { width: contentWidth, indent: '' });
 
     return (
       <Box flexDirection="column" marginBottom={1}>
@@ -109,7 +115,7 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
           ○○○ Thinking ({msg.thinkingType || 'processing'})
         </Text>
         {cleanContent && cleanContent.trim().length > 0 ? (
-          <Text color="magenta" dimColor wrap="wrap">{cleanContent}</Text>
+          <Text color="magenta" dimColor>{wrappedContent}</Text>
         ) : (
           debugMode && <Text dimColor>(no content - {msg.content.length} chars)</Text>
         )}
@@ -119,36 +125,31 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
 
   // Handle assistant messages with <think> blocks
   if (msg.role === 'assistant') {
-    const content = (msg.content || '').replace(/\n{3,}/g, '\n\n');
-    const thinkBlockRegex = /<think>([\s\S]*?)<\/think>/g;
+    const content = (msg.content || '').replace(/\n+/g, '\n');
 
-    if (thinkBlockRegex.test(content)) {
-      const parts = [];
-      let lastIndex = 0;
-      let match;
-      thinkBlockRegex.lastIndex = 0; // Reset regex
+    // Only apply special parsing if tags are present
+    if (content.includes('<think>') || content.includes('</think>')) {
+      const parts = content.split(/(<\/?think>)/); // Capture delimiters
+      let inThinkBlock = false; // State variable
 
-      while ((match = thinkBlockRegex.exec(content)) !== null) {
-        if (match.index > lastIndex) {
-          parts.push({ type: 'normal', text: content.substring(lastIndex, match.index) });
-        }
-        parts.push({ type: 'think', text: match[1] });
-        lastIndex = match.index + match[0].length;
-      }
-      if (lastIndex < content.length) {
-        parts.push({ type: 'normal', text: content.substring(lastIndex) });
-      }
-
-      // Filter out empty parts and render
       return (
         <Box flexDirection="column" marginBottom={1}>
           <Text color="green" bold>● KITTY</Text>
-          <Text wrap="wrap">
-            {parts.filter(p => p.text.trim()).map((part, index) => (
-              <Text key={index} color="green" dimColor={part.type === 'think'}>
-                {part.text}
-              </Text>
-            ))}
+          <Text>
+            {parts.map((part, index) => {
+              if (part === '<think>') {
+                inThinkBlock = true;
+                return null; // Hide the tag itself
+              }
+              if (part === '</think>') {
+                inThinkBlock = false;
+                return null; // Hide the tag itself
+              }
+              if (!part) return null; // Handle empty parts from split
+
+              const wrappedPart = wordWrap(part, { width: contentWidth, indent: '' });
+              return <Text key={index} color="green" dimColor={inThinkBlock}>{wrappedPart}</Text>;
+            })}
           </Text>
         </Box>
       );
@@ -156,7 +157,8 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
   }
 
   // Normalize content: replace 3+ consecutive newlines with just 2 newlines (one blank line)
-  const content = (msg.content || '').replace(/\n{3,}/g, '\n\n');
+  const content = (msg.content || '').replace(/\n+/g, '\n');
+  const wrappedContent = wordWrap(content, { width: contentWidth, indent: '' });
   const color = msg.role === 'user' ? 'cyan' :
     msg.role === 'assistant' ? 'green' :
       'yellow';
@@ -173,7 +175,7 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
         {prefix}{label}
       </Text>
       {content && content.trim().length > 0 ? (
-        <Text color={color} wrap="wrap">{content}</Text>
+        <Text color={color}>{wrappedContent}</Text>
       ) : (
         debugMode && <Text dimColor>(no content - {content.length} chars)</Text>
       )}
@@ -255,7 +257,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
             const fullDetails = `Tool: ${toolName}\nInput: ${JSON.stringify(input, null, 2)}\n\n${details || ''}`;
 
             setConfirmation({
-              title: 'Tool Execution Request',
+              title: 'Tool Execution Request ',
               message,
               details: fullDetails,
               onAllow: () => {
