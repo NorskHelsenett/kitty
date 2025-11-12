@@ -42,6 +42,10 @@ export class Orchestrator {
     this.modelName = getDefaultModel();
   }
 
+  setModel(modelName: string) {
+    this.modelName = modelName;
+  }
+
   setReasoningMode(mode: ReasoningMode) {
     this.reasoningMode = mode;
   }
@@ -228,7 +232,7 @@ Example for "explain this repo":
 }`;
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-large:fast',
+      model: this.modelName,
       max_tokens: 2000,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -408,7 +412,7 @@ Analyze: Did we fulfill the user's request? Are there issues? Should we continue
     onThinking?.(thinkingStep);
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-large:fast',
+      model: this.modelName,
       max_tokens: 4096, // Increased to allow for full file content in nextActions
       messages: [
         { role: 'system', content: systemPrompt },
@@ -466,7 +470,7 @@ Analyze: Did we fulfill the user's request? Are there issues? Should we continue
     ];
 
     const response = await this.client.chat.completions.create({
-      model: 'nhn-large:fast',
+      model: this.modelName,
       max_tokens: 1000,
       messages,
       temperature: 0.7,

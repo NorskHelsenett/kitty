@@ -6,7 +6,7 @@ import { ProjectContext, loadProjectContext, buildSystemMessageWithContext } fro
 import { TokenManager, TokenUsage } from './token-manager.js';
 import { PluginManager } from './plugin-manager.js';
 import { AgentManager } from './agent-manager.js';
-import { config, getDefaultModel } from './config.js';
+import { config, getDefaultModel, setDefaultModel } from './config.js';
 
 interface AgentSessionOptions {
   systemPrompt?: string;
@@ -202,6 +202,8 @@ export class AIAgent {
    */
   async setModel(modelName: string): Promise<void> {
     this.modelName = modelName;
+    this.orchestrator.setModel(modelName);
+    setDefaultModel(modelName);
 
     // Update token manager with new model info
     try {

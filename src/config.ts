@@ -1,3 +1,6 @@
+import * as fs from 'fs';
+import * as path from 'path';
+
 /**
  * Centralized configuration for AI models and API settings
  */
@@ -69,14 +72,46 @@ export const AVAILABLE_MODELS: Record<string, ModelConfig> = {
  */
 class ConfigManager {
   private config: APIConfig;
+  private configPath: string;
 
   constructor() {
+    // Define config path
+    const configDir = path.join(process.cwd(), '.kitty');
+    this.configPath = path.join(configDir, 'config.json');
+
     // Initialize from environment variables
     this.config = {
       baseURL: process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434',
       apiKey: process.env.OPENAI_API_KEY || '',
       defaultModel: process.env.DEFAULT_MODEL || 'nhn-large:fast',
     };
+
+    // Load from file, overriding env vars
+    this.loadConfig();
+  }
+
+  private loadConfig() {
+    try {
+      if (fs.existsSync(this.configPath)) {
+        const fileContent = fs.readFileSync(this.configPath, 'utf-8');
+        const savedConfig = JSON.parse(fileContent);
+        this.updateConfig(savedConfig);
+      }
+    } catch (error) {
+      // Ignore errors, use default/env config
+    }
+  }
+
+  private saveConfig() {
+    try {
+      const configDir = path.dirname(this.configPath);
+      if (!fs.existsSync(configDir)) {
+        fs.mkdirSync(configDir, { recursive: true });
+      }
+      fs.writeFileSync(this.configPath, JSON.stringify(this.config, null, 2));
+    } catch (error) {
+      // Ignore errors
+    }
   }
 
   /**
@@ -126,6 +161,7 @@ class ConfigManager {
    */
   setDefaultModel(modelName: string): void {
     this.config.defaultModel = modelName;
+    this.saveConfig();
   }
 
   /**

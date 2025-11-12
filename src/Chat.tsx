@@ -10,6 +10,8 @@ import { TaskList, Task as TaskType } from './components/TaskList.js';
 import { SelectionMenu, SelectionItem } from './components/SelectionMenu.js';
 import { ErrorDialog, ErrorDialogProps, getErrorDialogProps } from './components/ErrorDialog.js';
 import { WarningDialog } from './components/WarningDialog.js';
+import { ConfirmationPrompt } from './components/ConfirmationPrompt.js';
+
 
 // Configure marked for terminal output
 marked.use(markedTerminal({
@@ -95,29 +97,83 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
     return <Text>{msg.content}</Text>;
   }
 
+  // Handle thinking messages separately for custom formatting
+  if (msg.role === 'thinking') {
+    const thinkingTags = ['think', 'reasoning', 'reason'];
+    const tagPattern = new RegExp(`</?(${thinkingTags.join('|')})>`, 'g');
+    const cleanContent = (msg.content || '').replace(tagPattern, '').trim();
+
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color="magenta" dimColor>
+          ○○○ Thinking ({msg.thinkingType || 'processing'})
+        </Text>
+        {cleanContent && cleanContent.trim().length > 0 ? (
+          <Text color="magenta" dimColor wrap="wrap">{cleanContent}</Text>
+        ) : (
+          debugMode && <Text dimColor>(no content - {msg.content.length} chars)</Text>
+        )}
+      </Box>
+    );
+  }
+
+  // Handle assistant messages with <think> blocks
+  if (msg.role === 'assistant') {
+    const content = (msg.content || '').replace(/\n{3,}/g, '\n\n');
+    const thinkBlockRegex = /<think>([\s\S]*?)<\/think>/g;
+
+    if (thinkBlockRegex.test(content)) {
+      const parts = [];
+      let lastIndex = 0;
+      let match;
+      thinkBlockRegex.lastIndex = 0; // Reset regex
+
+      while ((match = thinkBlockRegex.exec(content)) !== null) {
+        if (match.index > lastIndex) {
+          parts.push({ type: 'normal', text: content.substring(lastIndex, match.index) });
+        }
+        parts.push({ type: 'think', text: match[1] });
+        lastIndex = match.index + match[0].length;
+      }
+      if (lastIndex < content.length) {
+        parts.push({ type: 'normal', text: content.substring(lastIndex) });
+      }
+
+      // Filter out empty parts and render
+      return (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color="green" bold>● KITTY</Text>
+          <Text wrap="wrap">
+            {parts.filter(p => p.text.trim()).map((part, index) => (
+              <Text key={index} color="green" dimColor={part.type === 'think'}>
+                {part.text}
+              </Text>
+            ))}
+          </Text>
+        </Box>
+      );
+    }
+  }
+
   // Normalize content: replace 3+ consecutive newlines with just 2 newlines (one blank line)
   const content = (msg.content || '').replace(/\n{3,}/g, '\n\n');
-  const isThinking = msg.role === 'thinking';
   const color = msg.role === 'user' ? 'cyan' :
     msg.role === 'assistant' ? 'green' :
-      msg.role === 'thinking' ? 'gray' :
-        'yellow';
+      'yellow';
   const prefix = msg.role === 'user' ? '› ' :
     msg.role === 'assistant' ? '● ' :
-      msg.role === 'thinking' ? '○○○ ' :
-        '• ';
+      '• ';
   const label = msg.role === 'user' ? 'You' :
     msg.role === 'assistant' ? 'KITTY' :
-      msg.role === 'thinking' ? `Thinking (${msg.thinkingType || 'processing'})` :
-        'System';
+      'System';
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color={color} bold={!isThinking} dimColor={isThinking}>
+      <Text color={color} bold>
         {prefix}{label}
       </Text>
       {content && content.trim().length > 0 ? (
-        <Text color={color} dimColor={isThinking} wrap="wrap">{content}</Text>
+        <Text color={color} wrap="wrap">{content}</Text>
       ) : (
         debugMode && <Text dimColor>(no content - {content.length} chars)</Text>
       )}
@@ -140,6 +196,8 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [clearInputField, setClearInputField] = useState(false);
   const [errorDialog, setErrorDialog] = useState<ErrorDialogProps | null>(null);
   const [warningMessage, setWarningMessage] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<any>(null);
+  const [allowedCommands, setAllowedCommands] = useState(new Set<string>());
   const { exit } = useApp();
 
   // Keyboard control state
@@ -187,8 +245,39 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
 
         // Set up tool confirmation callback
         setConfirmationCallback(async (toolName: string, input: any, details?: string) => {
-          // For now, auto-approve all tools (we can add a confirmation UI later)
-          return true;
+          const commandKey = `${toolName}:${JSON.stringify(input)}`;
+          if (allowedCommands.has(commandKey)) {
+            return true;
+          }
+
+          return new Promise<boolean>((resolve) => {
+            const message = `The AI is requesting to execute the following tool:`;
+            const fullDetails = `Tool: ${toolName}\nInput: ${JSON.stringify(input, null, 2)}\n\n${details || ''}`;
+
+            setConfirmation({
+              title: 'Tool Execution Request',
+              message,
+              details: fullDetails,
+              onAllow: () => {
+                setConfirmation(null);
+                resolve(true);
+              },
+              onAllowAndRemember: () => {
+                setConfirmation(null);
+                setAllowedCommands(prev => new Set(prev).add(commandKey));
+                resolve(true);
+              },
+              onExplain: () => {
+                setConfirmation(null);
+                addMessage('system', `The AI wanted to run the tool '${toolName}'. You can now guide the AI to do something different.`);
+                resolve(false);
+              },
+              onDeny: () => {
+                setConfirmation(null);
+                resolve(false);
+              },
+            });
+          });
         });
 
         // Update the header message with actual model name and current path
@@ -592,6 +681,11 @@ Ctrl+C (twice) - Exit application`);
         onClose={() => setWarningMessage(null)}
       />
     );
+  }
+
+  // Show confirmation prompt if there's a confirmation request
+  if (confirmation) {
+    return <ConfirmationPrompt {...confirmation} />;
   }
 
   // Show error dialog if there's an error
