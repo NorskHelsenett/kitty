@@ -25,6 +25,37 @@ marked.use(markedTerminal({
   link: chalk.blue.underline,
 }) as any);
 
+/**
+ * Preprocesses markdown to ensure proper spacing:
+ * - Adds newline before headers (if not already present)
+ * - Removes newlines between list items
+ */
+function preprocessMarkdown(content: string): string {
+  const lines = content.split('\n');
+  const result: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const prevLine = i > 0 ? lines[i - 1] : '';
+
+    // Check if current line is a header (starts with #)
+    const isHeader = /^#{1,6}\s/.test(line);
+
+    // Add newline before headers if previous line is not empty and not already spaced
+    if (isHeader && prevLine.trim() !== '' && result.length > 0) {
+      // Check if we already added a blank line
+      if (result[result.length - 1].trim() !== '') {
+        result.push('');
+      }
+    }
+
+    // Add the current line
+    result.push(line);
+  }
+
+  return result.join('\n');
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'thinking' | 'none';
@@ -123,9 +154,9 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
     );
   }
 
-  // Handle assistant messages with <think> blocks
+  // Handle assistant messages with <think> blocks and markdown formatting
   if (msg.role === 'assistant') {
-    const content = (msg.content || '').replace(/\n+/g, '\n');
+    const content = (msg.content || '');
 
     // Only apply special parsing if tags are present
     if (content.includes('<think>') || content.includes('</think>')) {
@@ -135,7 +166,7 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
       return (
         <Box flexDirection="column" marginBottom={1}>
           <Text color="green" bold>● KITTY</Text>
-          <Text>
+          <Box flexDirection="column">
             {parts.map((part, index) => {
               if (part === '<think>') {
                 inThinkBlock = true;
@@ -147,27 +178,44 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
               }
               if (!part) return null; // Handle empty parts from split
 
-              const wrappedPart = wordWrap(part, { width: contentWidth, indent: '' });
-              return <Text key={index} color="green" dimColor={inThinkBlock}>{wrappedPart}</Text>;
+              // For thinking parts, don't apply markdown - just wrap and dim
+              if (inThinkBlock) {
+                const wrappedPart = wordWrap(part, { width: contentWidth, indent: '' });
+                return <Text key={index} color="green" dimColor>{wrappedPart}</Text>;
+              }
+
+              // For non-thinking parts, apply markdown formatting
+              const processedPart = preprocessMarkdown(part);
+              const renderedPart = marked.parse(processedPart, { async: false }) as string;
+              return <Text key={index}>{renderedPart}</Text>;
             })}
-          </Text>
+          </Box>
         </Box>
       );
     }
+
+    // For assistant messages without <think> blocks, apply markdown formatting
+    const processedContent = preprocessMarkdown(content);
+    const renderedContent = marked.parse(processedContent, { async: false }) as string;
+
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color="green" bold>● KITTY</Text>
+        {renderedContent && renderedContent.trim().length > 0 ? (
+          <Text>{renderedContent}</Text>
+        ) : (
+          debugMode && <Text dimColor>(no content - {content.length} chars)</Text>
+        )}
+      </Box>
+    );
   }
 
-  // Normalize content: replace 3+ consecutive newlines with just 2 newlines (one blank line)
+  // Handle user and system messages (assistant messages are handled above)
   const content = (msg.content || '').replace(/\n+/g, '\n');
   const wrappedContent = wordWrap(content, { width: contentWidth, indent: '' });
-  const color = msg.role === 'user' ? 'cyan' :
-    msg.role === 'assistant' ? 'green' :
-      'yellow';
-  const prefix = msg.role === 'user' ? '› ' :
-    msg.role === 'assistant' ? '● ' :
-      '• ';
-  const label = msg.role === 'user' ? 'You' :
-    msg.role === 'assistant' ? 'KITTY' :
-      'System';
+  const color = msg.role === 'user' ? 'cyan' : 'yellow';
+  const prefix = msg.role === 'user' ? '› ' : '• ';
+  const label = msg.role === 'user' ? 'You' : 'System';
 
   return (
     <Box flexDirection="column" marginBottom={1}>
