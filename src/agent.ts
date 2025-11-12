@@ -444,7 +444,7 @@ export class AIAgent {
     userMessage: string,
     onTextChunk?: (text: string) => void
   ): Promise<void> {
-    const baseSystemMessage = 'You are a helpful AI assistant. Format responses using Markdown. Keep responses concise and clear. Always provide a complete and full response, even for simple questions.';
+    const baseSystemMessage = 'You are a helpful AI assistant. Format responses using Markdown. Keep responses concise and clear. Always provide a complete and full response, even for simple questions.\n\nIMPORTANT: Only use write_file when the user explicitly asks you to create or modify a file. Do NOT write files to save analysis, summaries, or documentation unless specifically requested. Instead, respond directly with the information.';
     const sessionAwareBase = this.buildSystemPrompt(baseSystemMessage);
     const systemContent = this.projectContext
       ? buildSystemMessageWithContext(this.projectContext, sessionAwareBase)
@@ -530,11 +530,14 @@ export class AIAgent {
 
 Format your response using Markdown for readability. Be concise but thorough. If tasks failed, explain what went wrong.
 
-IMPORTANT: 
+IMPORTANT:
 - Analyze and synthesize the task results - don't just list them. Provide insights and answer the user's original question.
 - If a file was written successfully (write_file task succeeded), do NOT output the file content in your response
 - Just confirm what was created, e.g., "I've created KITTY.md with project documentation including overview, commands, and coding rules."
-- Focus on what was accomplished, not reproducing file contents`;
+- Focus on what was accomplished, not reproducing file contents
+- Only use write_file when the user explicitly asks you to create or modify a file
+- Do NOT write files to save analysis, summaries, or documentation unless specifically requested
+- When analyzing files or code, respond directly with your findings - do not write them to a file`;
     const sessionAwareBase = this.buildSystemPrompt(baseSystemMessage);
     const systemContent = this.projectContext
       ? buildSystemMessageWithContext(this.projectContext, sessionAwareBase)
