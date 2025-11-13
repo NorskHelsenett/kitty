@@ -72,6 +72,58 @@ interface Message {
   thinkingType?: 'planning' | 'reflection' | 'decision';
 }
 
+const THINKING_TAGS = ['think', 'reasoning', 'reason'];
+const THINKING_TAG_PATTERN = new RegExp(`</?(${THINKING_TAGS.join('|')})>`, 'g');
+const THINKING_INDENT = '    '; // Treat four spaces as a visual tab inside Ink
+
+const cleanThinkingContent = (content: string | undefined): string => {
+  if (!content) return '';
+  return content.replace(THINKING_TAG_PATTERN, '').replace(/\s+/g, ' ').trim();
+};
+
+const formatThinkingLabel = (type?: Message['thinkingType']): string => {
+  switch (type) {
+    case 'planning':
+      return 'Planning';
+    case 'decision':
+      return 'Decision';
+    case 'reflection':
+      return 'Reflection';
+    default:
+      return 'Thinking';
+  }
+};
+
+const getThinkingLabelColor = (type?: Message['thinkingType']): string => {
+  switch (type) {
+    case 'planning':
+      return 'cyan';
+    case 'decision':
+      return 'yellow';
+    case 'reflection':
+      return 'green';
+    default:
+      return 'magenta';
+  }
+};
+
+const shortenThinkingText = (content: string, maxLength: number): string => {
+  if (!content || content.length <= maxLength) {
+    return content;
+  }
+  return `${content.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+};
+
+const summarizeThinkingGoal = (steps: Message[]): string => {
+  for (const step of steps) {
+    const cleaned = cleanThinkingContent(step.content);
+    if (!cleaned) continue;
+    const summaryCandidate = cleaned.split(/(?<=[.!?])\s+/)[0] || cleaned;
+    return shortenThinkingText(summaryCandidate, 60);
+  }
+  return '';
+};
+
 interface ChatProps {
   agent: AIAgent;
   debugMode?: boolean;
@@ -131,6 +183,105 @@ const messagesReducer = (state: Message[], action: MessageAction): Message[] => 
   }
 };
 
+type DisplayItem =
+  | { kind: 'message'; id: string; message: Message }
+  | { kind: 'thinking-group'; id: string; steps: Message[] };
+
+const groupMessagesForDisplay = (msgs: Message[]): DisplayItem[] => {
+  const items: DisplayItem[] = [];
+  let thinkingBuffer: Message[] = [];
+
+  const flushThinking = () => {
+    if (thinkingBuffer.length === 0) return;
+    const buffer = thinkingBuffer;
+    thinkingBuffer = [];
+    const firstId = buffer[0]?.id ?? `thinking-${Date.now()}`;
+    items.push({
+      kind: 'thinking-group',
+      id: `${firstId}-group`,
+      steps: buffer,
+    });
+  };
+
+  for (const msg of msgs) {
+    if (msg.role === 'thinking') {
+      thinkingBuffer.push(msg);
+      continue;
+    }
+
+    flushThinking();
+    items.push({ kind: 'message', id: msg.id, message: msg });
+  }
+
+  flushThinking();
+  return items;
+};
+
+const ThinkingGroupItem = React.memo(({ steps, debugMode }: { steps: Message[]; debugMode: boolean }) => {
+  const { stdout } = useStdout();
+  const terminalWidth = stdout ? stdout.columns : 80;
+  const contentWidth = terminalWidth - 6;
+
+  const processedSteps = steps
+    .map(step => {
+      const cleanContent = cleanThinkingContent(step.content);
+      return {
+        ...step,
+        cleanContent,
+        shortContent: shortenThinkingText(cleanContent, Math.max(contentWidth - 10, 40)),
+      };
+    })
+    .filter(step => step.cleanContent.length > 0);
+
+  const summary = summarizeThinkingGoal(processedSteps);
+
+  if (processedSteps.length === 0) {
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color="magenta" dimColor>○ Thinking</Text>
+        {debugMode && (
+          <Text color="magenta" dimColor>
+            {THINKING_INDENT}(no thinking content)
+          </Text>
+        )}
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Text color="magenta" dimColor>
+        ○ Thinking •
+        {/* {summary ? `○ Thinking • ${summary}` : '○ Thinking'} */}
+      </Text>
+      <Box flexDirection="column">
+        {processedSteps.map(step => {
+          const label = `${formatThinkingLabel(step.thinkingType)}• `;
+          const labelColor = getThinkingLabelColor(step.thinkingType);
+          const wrapWidth = Math.max(contentWidth - THINKING_INDENT.length - label.length, 20);
+          const wrapped = wordWrap(step.shortContent, { width: wrapWidth, indent: '' });
+          const lines = wrapped.split('\n');
+
+          return (
+            <Box key={step.id} flexDirection="column">
+              {lines.map((line, index) => (
+                <Box key={`${step.id}-line-${index}`} flexDirection="row">
+                  <Text color="magenta" dimColor>{THINKING_INDENT}</Text>
+                  <Text color={labelColor} bold={step.thinkingType === 'planning'}>
+                    {index === 0 ? label : ' '.repeat(label.length)}
+                  </Text>
+                  <Text color="white">{line}</Text>
+                </Box>
+              ))}
+            </Box>
+          );
+        })}
+      </Box>
+    </Box>
+  );
+});
+ThinkingGroupItem.displayName = 'ThinkingGroupItem';
+
 // Memoized message component to prevent re-rendering on input changes
 const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: boolean }) => {
   const { stdout } = useStdout();
@@ -148,15 +299,13 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
 
   // Handle thinking messages separately for custom formatting
   if (msg.role === 'thinking') {
-    const thinkingTags = ['think', 'reasoning', 'reason'];
-    const tagPattern = new RegExp(`</?(${thinkingTags.join('|')})>`, 'g');
-    const cleanContent = (msg.content || '').replace(tagPattern, '').trim();
+    const cleanContent = cleanThinkingContent(msg.content);
     const wrappedContent = wordWrap(cleanContent, { width: contentWidth, indent: '' });
 
     return (
       <Box flexDirection="column" marginBottom={1}>
         <Text color="magenta" dimColor>
-          ○○○ Thinking ({msg.thinkingType || 'processing'})
+          ○ Thinking ({msg.thinkingType || 'processing'})
         </Text>
         {cleanContent && cleanContent.trim().length > 0 ? (
           <Text color="magenta" dimColor>{wrappedContent}</Text>
@@ -203,7 +352,8 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
 
               // For thinking parts, don't apply markdown - just wrap and dim
               if (inThinkBlock) {
-                const wrappedPart = wordWrap(part, { width: contentWidth, indent: '' });
+                const compactPart = part.replace(/\n{2,}/g, '\n');
+                const wrappedPart = wordWrap(compactPart, { width: contentWidth, indent: '' });
                 return <Text key={index} color="green" dimColor>{wrappedPart}</Text>;
               }
 
@@ -830,6 +980,8 @@ After writing the file, confirm the update in your final response.`;
     return isStreaming ? msgs.slice(0, -1) : msgs;
   }, [messages, isStreaming]);
 
+  const staticDisplayItems = useMemo(() => groupMessagesForDisplay(staticMessages), [staticMessages]);
+
   const streamingMessage = useMemo(() => {
     return isStreaming ? lastMessage : null;
   }, [isStreaming, lastMessage]);
@@ -895,11 +1047,15 @@ After writing the file, confirm the update in your final response.`;
         {/* Messages area */}
         <Box flexDirection="column" paddingX={2} paddingY={1}>
           {/* Render static messages */}
-          {staticMessages.length > 0 && (
-            <Static items={staticMessages}>
-              {(msg) => (
-                <Box key={msg.id} flexDirection="column" marginBottom={1}>
-                  <MessageItem msg={msg} debugMode={debugMode} />
+          {staticDisplayItems.length > 0 && (
+            <Static items={staticDisplayItems}>
+              {(item: DisplayItem) => (
+                <Box key={item.id} flexDirection="column" marginBottom={1}>
+                  {item.kind === 'thinking-group' ? (
+                    <ThinkingGroupItem steps={item.steps} debugMode={debugMode} />
+                  ) : (
+                    <MessageItem msg={item.message} debugMode={debugMode} />
+                  )}
                 </Box>
               )}
             </Static>
