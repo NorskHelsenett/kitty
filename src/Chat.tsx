@@ -251,12 +251,12 @@ const ThinkingGroupItem = React.memo(({ steps, debugMode }: { steps: Message[]; 
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text color="magenta" dimColor>
-        ○ Thinking •
+        ○ Thinking
         {/* {summary ? `○ Thinking • ${summary}` : '○ Thinking'} */}
       </Text>
       <Box flexDirection="column">
         {processedSteps.map(step => {
-          const label = `${formatThinkingLabel(step.thinkingType)}• `;
+          const label = `${formatThinkingLabel(step.thinkingType)} • `;
           const labelColor = getThinkingLabelColor(step.thinkingType);
           const wrapWidth = Math.max(contentWidth - THINKING_INDENT.length - label.length, 20);
           const wrapped = wordWrap(step.shortContent, { width: wrapWidth, indent: '' });
@@ -268,7 +268,7 @@ const ThinkingGroupItem = React.memo(({ steps, debugMode }: { steps: Message[]; 
                 <Box key={`${step.id}-line-${index}`} flexDirection="row">
                   <Text color="magenta" dimColor>{THINKING_INDENT}</Text>
                   <Text color={labelColor} bold={step.thinkingType === 'planning'}>
-                    {index === 0 ? label : ' '.repeat(label.length)}
+                    {index === 0 ? '└' + label : ' '.repeat(label.length)}
                   </Text>
                   <Text color="white">{line}</Text>
                 </Box>
@@ -346,7 +346,7 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
               }
               if (part === '</think>') {
                 inThinkBlock = false;
-                return null; // Hide the tag itself
+                return <Text key={`think-end-${index}`}>{'\n'}</Text>;
               }
               if (!part) return null; // Handle empty parts from split
 
