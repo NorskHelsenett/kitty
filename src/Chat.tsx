@@ -99,7 +99,7 @@ const getInitialMessages = (modelName: string = 'Loading...', currentPath: strin
 ██╔═██╗ ██║   ██║      ██║     ╚██╔╝
 ██║  ██╗██║   ██║      ██║      ██║
 ╚═╝  ╚═╝╚═╝   ╚═╝      ╚═╝      ╚═╝
-Welcome to KITTY -  Your AI-powered assistant!
+Welcome to KITTY -  Your KI-powered assistant!
     ${APP_VERSION}       •        ${modelName}
 ${currentPath}
                                                   `,
@@ -170,6 +170,16 @@ const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: b
   // Handle assistant messages with <think> blocks and markdown formatting
   if (msg.role === 'assistant') {
     const content = (msg.content || '');
+
+    // The welcome message is plain text and should not be parsed as Markdown.
+    if (msg.id === 'welcome') {
+      return (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color="green" bold>● KITTY</Text>
+          <Text>{content}</Text>
+        </Box>
+      );
+    }
 
     // Only apply special parsing if tags are present
     if (content.includes('<think>') || content.includes('</think>')) {

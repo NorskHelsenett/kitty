@@ -29,7 +29,12 @@ export function SelectionMenu({ title, items, onSubmit, onCancel, singleSelect =
     }
 
     if (key.return) {
-      onSubmit(Array.from(selections));
+      if (singleSelect) {
+        const currentItem = items[selectedIndex];
+        onSubmit([currentItem.id]);
+      } else {
+        onSubmit(Array.from(selections));
+      }
       return;
     }
 
@@ -39,20 +44,16 @@ export function SelectionMenu({ title, items, onSubmit, onCancel, singleSelect =
       setSelectedIndex(prev => Math.min(items.length - 1, prev + 1));
     } else if (input === ' ') {
       const currentItem = items[selectedIndex];
+      if (singleSelect) {
+        onSubmit([currentItem.id]);
+        return;
+      }
       setSelections(prev => {
         const newSet = new Set(prev);
-        
-        if (singleSelect) {
-          // Single select mode: clear all and add current
-          newSet.clear();
-          newSet.add(currentItem.id);
+        if (newSet.has(currentItem.id)) {
+          newSet.delete(currentItem.id);
         } else {
-          // Multi select mode: toggle current
-          if (newSet.has(currentItem.id)) {
-            newSet.delete(currentItem.id);
-          } else {
-            newSet.add(currentItem.id);
-          }
+          newSet.add(currentItem.id);
         }
         return newSet;
       });
@@ -67,7 +68,7 @@ export function SelectionMenu({ title, items, onSubmit, onCancel, singleSelect =
       <Box marginBottom={1}>
         <Text dimColor>
           {singleSelect
-            ? 'Use ↑↓/k/j to navigate, Space to select, Enter to confirm, Esc to cancel'
+            ? 'Use ↑↓/k/j to navigate, Enter/Space to select, Esc to cancel'
             : 'Use ↑↓/k/j to navigate, Space to select/deselect, Enter to confirm, Esc to cancel'}
         </Text>
       </Box>
