@@ -18,6 +18,13 @@ A terminal-first AI chat client with agent and plugin support, rendered with Ink
 npm install -g @norskhelsenett/kitty
 ```
 
+Then set the access with these variables:
+
+```bash
+export OPENAI_BASE_URL="https://your-openwebui-instance/api"
+export OPENAI_API_KEY="your-api-key-from-ollama"
+```
+
 ## Features
 
 - **Clean Chat Interface** – Intuitive terminal-based chat that hides system/tool chatter for a cleaner conversation view.
