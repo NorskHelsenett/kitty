@@ -265,6 +265,8 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [layoutKey, setLayoutKey] = useState(0);
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [modelItems, setModelItems] = useState<SelectionItem[]>([]);
+  const [showPluginMenu, setShowPluginMenu] = useState(false);
+  const [pluginItems, setPluginItems] = useState<SelectionItem[]>([]);
   const [messagesInitialized, setMessagesInitialized] = useState(false);
   const [clearInputField, setClearInputField] = useState(false);
   const [errorDialog, setErrorDialog] = useState<ErrorDialogProps | null>(null);
@@ -503,88 +505,10 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
     setTasks([]);
   }, []);
 
-  const handleModelSelection = useCallback(async (selectedIds: string[]) => {
-    if (selectedIds.length > 0) {
-      const selectedModel = selectedIds[0];
-      try {
-        await agent.setModel(selectedModel);
-        addMessage('system', `Model changed to: ${selectedModel}`);
-      } catch (error) {
-        const errorProps = getErrorDialogProps(error);
-        errorProps.onClose = () => setErrorDialog(null);
-        setErrorDialog(errorProps);
-      }
-    }
-    setShowModelMenu(false);
-  }, [agent, addMessage]);
-
-  const handleModelMenuCancel = useCallback(() => {
-    setShowModelMenu(false);
-  }, []);
-
-  const handleCommand = useCallback(async (command: string) => {
-    const cmd = command.toLowerCase().trim();
-
-    if (cmd === '/help') {
-      addMessage('system', `Available Commands:
-/help - Show this help message
-/model - Select AI model to use
-/agents - Manage agents
-/plugins - Manage plugins
-
-Keyboard Shortcuts:
-ESC - Cancel ongoing request
-Ctrl+C (twice) - Exit application`);
-    } else if (cmd === '/model') {
-      // Fetch available models
-      try {
-        const models = await agent.listAvailableModels();
-        const currentModel = agent.getCurrentModel();
-        const items: SelectionItem[] = models.map(model => ({
-          id: model.id,
-          name: model.id,
-          description: model.owned_by || 'AI Model',
-          enabled: model.id === currentModel
-        }));
-        setModelItems(items);
-        setShowModelMenu(true);
-      } catch (error) {
-        const errorProps = getErrorDialogProps(error);
-        errorProps.onClose = () => setErrorDialog(null);
-        setErrorDialog(errorProps);
-      }
-    } else {
-      addMessage('system', `Unknown command: ${command}`);
-    }
-  }, [agent, addMessage]);
-
-  const handleSubmit = useCallback(async (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed || isProcessing) return;
-
-    // Hide exit prompt if user submits a new prompt
-    setShowExitPrompt(false);
-
-    // Clear completed tasks when starting a new query
-    const allTasksCompleted = tasks.length > 0 && tasks.every(t => t.completed);
-    if (allTasksCompleted) {
-      clearTasks();
-    }
-
-    setIsProcessing(true);
-    streamStartTime.current = Date.now();
-    streamTokenCount.current = 0;
-
-    // Handle slash commands
-    if (trimmed.startsWith('/')) {
-      logToFile(`COMMAND: ${trimmed}`);
-      await handleCommand(trimmed);
-      setIsProcessing(false);
-      return;
-    }
-
-    addMessage('user', trimmed);
-    logToFile(`USER: ${trimmed}`);
+  const executePrompt = useCallback(async (prompt: string, options?: { displayText?: string }) => {
+    const displayContent = options?.displayText ?? prompt;
+    addMessage('user', displayContent);
+    logToFile(`USER: ${prompt}`);
 
     try {
       let fullResponse = '';
@@ -594,7 +518,7 @@ Ctrl+C (twice) - Exit application`);
       abortControllerRef.current = new AbortController();
 
       const chatPromise = agent.chat(
-        trimmed,
+        prompt,
         // Text streaming callback
         (text: string) => {
           if (!text) return; // Do not process empty chunks
@@ -666,7 +590,6 @@ Ctrl+C (twice) - Exit application`);
         logToFile(`FINAL_RESPONSE: ${fullResponse}`);
 
         // Force one final update to ensure we have the complete response
-        // This bypasses throttling to guarantee the last content is shown
         if (fullResponse.length > 0) {
           dispatch({ type: 'UPDATE_LAST', content: fullResponse });
           logToFile(`FINAL_UPDATE: Forced final update with ${fullResponse.length} chars`);
@@ -700,14 +623,11 @@ Ctrl+C (twice) - Exit application`);
         const errorProps = getErrorDialogProps(error);
         errorProps.onClose = () => setErrorDialog(null);
         setErrorDialog(errorProps);
-
-        // Don't log to console - error is shown in the UI dialog
-        // console.error('Chat error:', error);
       } else {
         logToFile('CHAT_ABORTED: User cancelled the request');
       }
     } finally {
-      logToFile(`CHAT_END: isProcessing=${isProcessing}, messages.length=${messages.length}`);
+      logToFile(`CHAT_END: messages.length=${messages.length}`);
 
       // Flush any pending updates to ensure the last chunk is rendered
       flushPendingUpdate();
@@ -718,11 +638,189 @@ Ctrl+C (twice) - Exit application`);
         updateTimeout.current = null;
         logToFile('CLEANUP: Cleared pending update timeout');
       }
+    }
+  }, [addMessage, logToFile, agent, updateLastMessage, addTask, completeTask, clearTasks, tasks, flushPendingUpdate, setErrorDialog, setLastTokenCount, messages.length]);
 
+  const handleModelSelection = useCallback(async (selectedIds: string[]) => {
+    if (selectedIds.length > 0) {
+      const selectedModel = selectedIds[0];
+      try {
+        await agent.setModel(selectedModel);
+        addMessage('system', `Model changed to: ${selectedModel}`);
+      } catch (error) {
+        const errorProps = getErrorDialogProps(error);
+        errorProps.onClose = () => setErrorDialog(null);
+        setErrorDialog(errorProps);
+      }
+    }
+    setShowModelMenu(false);
+  }, [agent, addMessage]);
+
+  const handleModelMenuCancel = useCallback(() => {
+    setShowModelMenu(false);
+  }, []);
+
+  const handlePluginSelection = useCallback(async (selectedIds: string[]) => {
+    try {
+      const plugins = await agent.listPlugins();
+      const selectedSet = new Set(selectedIds);
+      const enabled: string[] = [];
+      const disabled: string[] = [];
+
+      for (const plugin of plugins) {
+        const shouldEnable = selectedSet.has(plugin.name);
+        if (shouldEnable && !plugin.enabled) {
+          await agent.setPluginEnabled(plugin.name, true);
+          enabled.push(plugin.name);
+        } else if (!shouldEnable && plugin.enabled) {
+          await agent.setPluginEnabled(plugin.name, false);
+          disabled.push(plugin.name);
+        }
+      }
+
+      if (enabled.length === 0 && disabled.length === 0) {
+        addMessage('system', 'Plugin selections unchanged.');
+      } else {
+        const changes: string[] = [];
+        if (enabled.length > 0) {
+          changes.push(`Enabled: ${enabled.join(', ')}`);
+        }
+        if (disabled.length > 0) {
+          changes.push(`Disabled: ${disabled.join(', ')}`);
+        }
+        addMessage('system', `Plugin changes:\n${changes.join('\n')}`);
+      }
+    } catch (error) {
+      const errorProps = getErrorDialogProps(error);
+      errorProps.onClose = () => setErrorDialog(null);
+      setErrorDialog(errorProps);
+    } finally {
+      setShowPluginMenu(false);
+    }
+  }, [agent, addMessage, setErrorDialog, setShowPluginMenu]);
+
+  const handlePluginMenuCancel = useCallback(() => {
+    setShowPluginMenu(false);
+  }, []);
+
+  const handleCommand = useCallback(async (command: string) => {
+    const cmd = command.toLowerCase().trim();
+
+    if (cmd === '/help') {
+      addMessage('system', `Available Commands:
+/help - Show this help message
+/init - Generate or refresh KITTY.md project context
+/model - Select AI model to use
+/agents - Manage agents
+/plugins - Manage plugins
+
+Keyboard Shortcuts:
+ESC - Cancel ongoing request
+Ctrl+C (twice) - Exit application`);
+    } else if (cmd === '/init') {
+      const context = agent.getProjectContext();
+      const hasExistingKitty = !!context?.hasKittyMd;
+      const initPrompt = `You are Kitty's project context generator. ${
+        hasExistingKitty
+          ? 'Refresh the existing KITTY.md with an up-to-date project snapshot.'
+          : 'Create a new KITTY.md that captures the current project snapshot.'
+      }
+
+Requirements:
+- Analyze the repository structure, key configs, dependencies, scripts, and coding conventions.
+- Organize the documentation into clear sections (overview, tooling, commands, coding standards, etc.).
+- Always regenerate the entire KITTY.md file from scratch when this command is run.
+- Use the write_file tool to overwrite KITTY.md (creating it if missing). Do not append or partially edit.
+- Keep the content concise but comprehensive so it can serve as authoritative project context.
+
+After writing the file, confirm the update in your final response.`;
+
+      await executePrompt(initPrompt, { displayText: '/init' });
+
+      try {
+        const refreshed = await agent.refreshProjectContext();
+        if (refreshed.hasKittyMd) {
+          addMessage('system', 'Project context reloaded from KITTY.md');
+        } else {
+          addMessage('system', 'KITTY.md was not found after initialization. Please rerun /init.');
+        }
+      } catch (error) {
+        addMessage('system', `Project context could not be reloaded: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else if (cmd === '/plugins') {
+      try {
+        const pluginMetadata = await agent.listPlugins();
+        if (pluginMetadata.length === 0) {
+          addMessage('system', 'No plugins installed. Use `kitty plugin install <source>` from the shell first.');
+          return;
+        }
+
+        const items = pluginMetadata.map(plugin => ({
+          id: plugin.name,
+          name: plugin.name,
+          description: plugin.description || 'No description provided',
+          enabled: plugin.enabled,
+        }));
+
+        setPluginItems(items);
+        setShowPluginMenu(true);
+      } catch (error) {
+        const errorProps = getErrorDialogProps(error);
+        errorProps.onClose = () => setErrorDialog(null);
+        setErrorDialog(errorProps);
+      }
+    } else if (cmd === '/model') {
+      // Fetch available models
+      try {
+        const models = await agent.listAvailableModels();
+        const currentModel = agent.getCurrentModel();
+        const items: SelectionItem[] = models.map(model => ({
+          id: model.id,
+          name: model.id,
+          description: model.owned_by || 'AI Model',
+          enabled: model.id === currentModel
+        }));
+        setModelItems(items);
+        setShowModelMenu(true);
+      } catch (error) {
+        const errorProps = getErrorDialogProps(error);
+        errorProps.onClose = () => setErrorDialog(null);
+        setErrorDialog(errorProps);
+      }
+    } else {
+      addMessage('system', `Unknown command: ${command}`);
+    }
+  }, [agent, addMessage, executePrompt, setErrorDialog, setPluginItems, setShowPluginMenu]);
+
+  const handleSubmit = useCallback(async (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || isProcessing) return;
+
+    setShowExitPrompt(false);
+
+    const allTasksCompleted = tasks.length > 0 && tasks.every(t => t.completed);
+    if (allTasksCompleted) {
+      clearTasks();
+    }
+
+    setIsProcessing(true);
+    streamStartTime.current = Date.now();
+    streamTokenCount.current = 0;
+
+    try {
+      if (trimmed.startsWith('/')) {
+        logToFile(`COMMAND: ${trimmed}`);
+        await handleCommand(trimmed);
+        return;
+      }
+
+      await executePrompt(trimmed);
+    } finally {
+      logToFile(`REQUEST_COMPLETE: input="${trimmed}"`);
       setIsProcessing(false);
       abortControllerRef.current = null;
     }
-  }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks, handleCommand]);
+  }, [isProcessing, tasks, clearTasks, setShowExitPrompt, logToFile, handleCommand, executePrompt]);
 
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
   const isStreaming = isProcessing && lastMessage?.role === 'assistant';
@@ -749,7 +847,7 @@ Ctrl+C (twice) - Exit application`);
   if (warningMessage) {
     return (
       <WarningDialog
-        title="Connection Warning"
+        title="Connection Warning  "
         message={warningMessage}
         onClose={() => setWarningMessage(null)}
       />
@@ -764,6 +862,18 @@ Ctrl+C (twice) - Exit application`);
   // Show error dialog if there's an error
   if (errorDialog) {
     return <ErrorDialog {...errorDialog} />;
+  }
+
+  // Show plugin selection menu if requested
+  if (showPluginMenu) {
+    return (
+      <SelectionMenu
+        title="Manage Plugins"
+        items={pluginItems}
+        onSubmit={handlePluginSelection}
+        onCancel={handlePluginMenuCancel}
+      />
+    );
   }
 
   // Show model selection menu if requested

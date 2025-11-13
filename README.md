@@ -108,8 +108,7 @@ Inside the TUI, you can use these commands:
 | `/model` | Switch the active AI model |
 | `/agents` | Manage and run custom agents |
 | `/plugins` | Enable or disable installed plugins |
-| `/init` | Generate `KITTY.md` project context (auto-run on first use) |
-| `/reinit` | Regenerate `KITTY.md` from scratch, overwriting the existing file |
+| `/init` | Generate or refresh `KITTY.md` project context (auto-run on first use) |
 | `/clear` | Clear the visible conversation history |
 
 **Keyboard Shortcuts**
@@ -137,7 +136,7 @@ Kitty can automatically generate and maintain a `KITTY.md` file that captures yo
 1. Run `/init` inside the TUI (or it runs automatically on first launch)
 2. Kitty scans your project directory and generates `KITTY.md`
 3. On every new chat, the agent loads this context for richer, more accurate answers
-4. Update anytime with `/reinit` to refresh the project snapshot
+4. Run `/init` anytime to refresh the project snapshot
 
 This is especially useful for:
 - Understanding project structure without having to explain it each time
