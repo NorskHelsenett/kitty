@@ -467,6 +467,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
     (async () => {
       try {
         const result = await agent.initialize();
+        const currentModel = agent.getCurrentModel();
 
         // Set up tool confirmation callback
         setConfirmationCallback(async (toolName: string, input: any, details?: string) => {
@@ -507,10 +508,9 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
 
         // Update the header message with actual model name and current path
         if (!messagesInitialized) {
-          const modelName = agent.getCurrentModel();
           const currentPath = process.cwd();
 
-          const updatedMessages = getInitialMessages(modelName, currentPath);
+          const updatedMessages = getInitialMessages(currentModel, currentPath);
 
           // Clear existing messages and add the new ones with proper information
           dispatch({ type: 'CLEAR' });
@@ -526,6 +526,34 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
           }
 
           setMessagesInitialized(true);
+        }
+
+        // Ensure the configured model is actually available
+        try {
+          const availableModels = await agent.listAvailableModels();
+          const modelExists = availableModels.some(model => model.id === currentModel);
+
+          if (!modelExists) {
+            const warningText = availableModels.length > 0
+              ? `⚠️  The configured model "${currentModel}" is not available. Please select one of the available models to continue.`
+              : `⚠️  The configured model "${currentModel}" is not available, and no models could be fetched. Verify your API server and credentials, then choose a model via /model once available.`;
+
+            setWarningMessage(prev => prev ? `${prev}\n\n${warningText}` : warningText);
+
+            if (availableModels.length > 0) {
+              const items: SelectionItem[] = availableModels.map(model => ({
+                id: model.id,
+                name: model.id,
+                description: model.owned_by || 'AI Model',
+                enabled: false,
+              }));
+              setModelItems(items);
+              setShowModelMenu(true);
+            }
+          }
+        } catch (modelListError) {
+          const warningText = `⚠️  Tried to verify the configured model "${currentModel}", but listing models failed: ${modelListError instanceof Error ? modelListError.message : String(modelListError)}.`;
+          setWarningMessage(prev => prev ? `${prev}\n\n${warningText}` : warningText);
         }
 
         setInitialized(true);

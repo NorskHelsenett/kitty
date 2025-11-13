@@ -28,43 +28,15 @@ export const AVAILABLE_MODELS: Record<string, ModelConfig> = {
     name: 'nhn-large:fast',
     displayName: 'NHN Small (Fast)',
     description: 'Fast, lightweight model for quick tasks',
-    contextWindow: 32000,
-    provider: 'other',
-  },
-  'nhn-medium': {
-    name: 'nhn-medium',
-    displayName: 'NHN Medium',
-    description: 'Balanced model for general tasks',
-    contextWindow: 64000,
-    provider: 'other',
-  },
-  'nhn-large:slow': {
-    name: 'nhn-large:slow',
-    displayName: 'NHN Large (Slow)',
-    description: 'Powerful model for deep analysis',
     contextWindow: 128000,
     provider: 'other',
   },
-  'gpt-3.5-turbo': {
-    name: 'gpt-3.5-turbo',
-    displayName: 'GPT-3.5 Turbo',
-    description: 'OpenAI fast model',
-    contextWindow: 16385,
-    provider: 'openai',
-  },
-  'gpt-4': {
-    name: 'gpt-4',
-    displayName: 'GPT-4',
-    description: 'OpenAI most capable model',
-    contextWindow: 8192,
-    provider: 'openai',
-  },
-  'gpt-4-turbo': {
-    name: 'gpt-4-turbo',
-    displayName: 'GPT-4 Turbo',
-    description: 'OpenAI fast and capable model',
+  'nhn-small:fast': {
+    name: 'nhn-small:fast',
+    displayName: 'NHN Small (Fast)',
+    description: 'Fast, lightweight model for quick tasks',
     contextWindow: 128000,
-    provider: 'openai',
+    provider: 'other',
   },
 };
 
