@@ -43,7 +43,9 @@ export async function executeTool(toolName: string, input: any): Promise<string>
       const truncated = (input.content?.length || 0) > 200 ? '...' : '';
       details = `File: ${input.path}\nSize: ${input.content?.length || 0} bytes\nPreview:\n${contentPreview}${truncated}`;
     } else if (toolName === 'execute_command') {
-      const workDir = input.working_directory || 'current directory';
+      const workDir = input.working_directory
+        ? path.resolve(input.working_directory)
+        : process.cwd();
       details = `Command: ${input.command}\nWorking Directory: ${workDir}`;
     } else if (toolName === 'git_operation') {
       const repoPath = input.repository_path || 'current directory';

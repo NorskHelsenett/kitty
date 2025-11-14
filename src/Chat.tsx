@@ -64,6 +64,13 @@ function preprocessMarkdown(content: string): string {
   return result.join('\n');
 }
 
+// Collapse runs of blank lines so assistant replies stay compact
+const compactAssistantContent = (content: string): string => {
+  if (!content) return '';
+  const normalized = content.replace(/\r\n/g, '\n');
+  return normalized.replace(/\n(?:[ \t]*\n){2,}/g, '\n\n');
+};
+
 interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'thinking' | 'none';
@@ -478,10 +485,10 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
 
           return new Promise<boolean>((resolve) => {
             const message = `The AI is requesting to execute the following tool:`;
-            const fullDetails = `Tool: ${toolName}\nInput: ${JSON.stringify(input, null, 2)}\n\n${details || ''}`;
+            const fullDetails = `Tool: ${toolName}\n${details || ''}`;
 
             setConfirmation({
-              title: 'Tool Execution Request ',
+              title: 'Tool Execution Request',
               message,
               details: fullDetails,
               onAllow: () => {
@@ -614,10 +621,11 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const addMessage = useCallback((role: Message['role'], content: string, thinkingType?: 'planning' | 'reflection' | 'decision') => {
     // Guard against null/undefined content
     const safeContent = content || '';
+    const normalizedContent = role === 'assistant' ? compactAssistantContent(safeContent) : safeContent;
     const id = `msg-${Date.now()}-${messageIdCounter.current++}`;
-    const newMsg = { id, role, content: safeContent, timestamp: Date.now(), thinkingType };
+    const newMsg = { id, role, content: normalizedContent, timestamp: Date.now(), thinkingType };
 
-    logToFile(`ADD_MESSAGE: id=${id}, role=${role}, contentLength=${safeContent.length}, thinkingType=${thinkingType || 'none'}`);
+    logToFile(`ADD_MESSAGE: id=${id}, role=${role}, contentLength=${normalizedContent.length}, thinkingType=${thinkingType || 'none'}`);
 
     dispatch({ type: 'ADD', message: newMsg });
   }, [logToFile]);
@@ -637,15 +645,16 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const updateLastMessage = useCallback((content: string) => {
     const now = Date.now();
     const safeContent = content || '';
+    const normalizedContent = compactAssistantContent(safeContent);
 
-    if (safeContent.length === 0) {
+    if (normalizedContent.length === 0) {
       logToFile('UPDATE_LAST_MESSAGE: Ignoring empty update');
       return;
     }
 
-    logToFile(`UPDATE_LAST_MESSAGE: contentLength=${safeContent.length}`);
+    logToFile(`UPDATE_LAST_MESSAGE: contentLength=${normalizedContent.length}`);
 
-    pendingUpdate.current = safeContent;
+    pendingUpdate.current = normalizedContent;
 
     // Throttle to 300ms for smooth terminal rendering
     const THROTTLE_DELAY = 300;
@@ -769,7 +778,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
 
         // Force one final update to ensure we have the complete response
         if (fullResponse.length > 0) {
-          dispatch({ type: 'UPDATE_LAST', content: fullResponse });
+          dispatch({ type: 'UPDATE_LAST', content: compactAssistantContent(fullResponse) });
           logToFile(`FINAL_UPDATE: Forced final update with ${fullResponse.length} chars`);
         }
 
@@ -898,11 +907,10 @@ Ctrl+C (twice) - Exit application`);
     } else if (cmd === '/init') {
       const context = agent.getProjectContext();
       const hasExistingKitty = !!context?.hasKittyMd;
-      const initPrompt = `You are Kitty's project context generator. ${
-        hasExistingKitty
-          ? 'Refresh the existing KITTY.md with an up-to-date project snapshot.'
-          : 'Create a new KITTY.md that captures the current project snapshot.'
-      }
+      const initPrompt = `You are Kitty's project context generator. ${hasExistingKitty
+        ? 'Refresh the existing KITTY.md with an up-to-date project snapshot.'
+        : 'Create a new KITTY.md that captures the current project snapshot.'
+        }
 
 Requirements:
 - Analyze the repository structure, key configs, dependencies, scripts, and coding conventions.
