@@ -143,7 +143,7 @@ type MessageAction =
   | { type: 'CLEAR' };
 
 // Version string - updated automatically by release workflow
-const APP_VERSION = 'v0.1.0';
+const APP_VERSION = 'v0.1.1';
 
 // Initial messages shown on startup and after clear
 const getInitialMessages = (modelName: string = 'Loading...', currentPath: string = ''): Message[] => [
