@@ -12,10 +12,26 @@ A terminal-first AI chat client with agent and plugin support, rendered with Ink
 
 </div>
 
+> [!WARNING]
+>
+> **Kitty can execute commands, access and modify files, and run arbitrary processes on your computer.**
+>
+> Use of this tool is entirely at your own risk. You are responsible for reviewing actions, protecting sensitive data, and backing up important files. The project authors, contributors, and Norskhelsenett are not liable for any data loss, damages, or other consequences resulting from use of Kitty. Run in a safe environment or sandbox if you are unsure.
+
 ## Quick Install
 
 ```bash
 npm install -g @norskhelsenett/kitty
+```
+
+### Sandboxed usage
+
+The best way to use kitty in a sandboxed environment is to execute the docker file directly with a read-only mount. (This wont stop git commands though)
+
+```bash
+docker build -t kitty .
+
+docker run --rm -it --volume "$(pwd)":/wrk:ro -e OPENAI_BASE_URL="http://host.docker.internal:11434" kitty
 ```
 
 ## Features
