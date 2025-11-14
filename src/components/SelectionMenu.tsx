@@ -17,10 +17,38 @@ interface SelectionMenuProps {
 }
 
 export function SelectionMenu({ title, items, onSubmit, onCancel, singleSelect = false }: SelectionMenuProps) {
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [selections, setSelections] = useState<Set<string>>(
-    new Set(items.filter(item => item.enabled).map(item => item.id))
-  );
+  const getInitialSelectedIndex = () => {
+    if (items.length === 0) {
+      return 0;
+    }
+
+    if (singleSelect) {
+      const preSelectedIndex = items.findIndex(item => item.enabled);
+      return preSelectedIndex >= 0 ? preSelectedIndex : 0;
+    }
+
+    return 0;
+  };
+
+  const getInitialSelections = () => {
+    const enabledItems = items.filter(item => item.enabled).map(item => item.id);
+
+    if (items.length === 0) {
+      return new Set<string>();
+    }
+
+    if (singleSelect) {
+      if (enabledItems.length > 0) {
+        return new Set<string>([enabledItems[0]]);
+      }
+      return new Set<string>([items[0].id]);
+    }
+
+    return new Set<string>(enabledItems);
+  };
+
+  const [selectedIndex, setSelectedIndex] = useState(getInitialSelectedIndex);
+  const [selections, setSelections] = useState<Set<string>>(getInitialSelections);
 
   useInput((input, key) => {
     if (key.escape) {
@@ -29,7 +57,14 @@ export function SelectionMenu({ title, items, onSubmit, onCancel, singleSelect =
     }
 
     if (key.return) {
-      onSubmit(Array.from(selections));
+      if (singleSelect) {
+        const currentItem = items[selectedIndex];
+        if (currentItem) {
+          onSubmit([currentItem.id]);
+        }
+      } else {
+        onSubmit(Array.from(selections));
+      }
       return;
     }
 
@@ -39,20 +74,20 @@ export function SelectionMenu({ title, items, onSubmit, onCancel, singleSelect =
       setSelectedIndex(prev => Math.min(items.length - 1, prev + 1));
     } else if (input === ' ') {
       const currentItem = items[selectedIndex];
+      if (!currentItem) {
+        return;
+      }
+
+      if (singleSelect) {
+        setSelections(new Set([currentItem.id]));
+        return;
+      }
       setSelections(prev => {
         const newSet = new Set(prev);
-        
-        if (singleSelect) {
-          // Single select mode: clear all and add current
-          newSet.clear();
-          newSet.add(currentItem.id);
+        if (newSet.has(currentItem.id)) {
+          newSet.delete(currentItem.id);
         } else {
-          // Multi select mode: toggle current
-          if (newSet.has(currentItem.id)) {
-            newSet.delete(currentItem.id);
-          } else {
-            newSet.add(currentItem.id);
-          }
+          newSet.add(currentItem.id);
         }
         return newSet;
       });

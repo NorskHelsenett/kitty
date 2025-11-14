@@ -56,7 +56,8 @@
     "marked": "^15.0.12",
     "marked-terminal": "^7.3.0",
     "openai": "^6.8.1",
-    "react": "^19.2.0"
+    "react": "^19.2.0",
+    "word-wrap": "^1.2.5"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

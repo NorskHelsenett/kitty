@@ -339,6 +339,10 @@ export class PluginManager {
     this.plugins.delete(pluginName);
   }
 
+  getPlugin(pluginName: string): Plugin | undefined {
+    return this.plugins.get(pluginName);
+  }
+
   getLoadedPlugins(): Plugin[] {
     return Array.from(this.plugins.values());
   }

@@ -2,39 +2,54 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 export interface ConfirmationPromptProps {
+
   title: string;
+
   message: string;
+
   details?: string;
-  onConfirm: () => void;
-  onReject: () => void;
+
+  onAllow: () => void;
+
+  onAllowAndRemember: () => void;
+
+  onExplain: () => void;
+
+  onDeny: () => void;
+
 }
 
-export function ConfirmationPrompt({ title, message, details, onConfirm, onReject }: ConfirmationPromptProps) {
-  const [selected, setSelected] = useState<'yes' | 'no'>('yes');
+
+
+export function ConfirmationPrompt({ title, message, details, onAllow, onAllowAndRemember, onExplain, onDeny }: ConfirmationPromptProps) {
+
+  const [selected, setSelected] = useState(0);
+
+  const options = ['Yes, allow', 'Yes, allow for this session', 'No, explain changes'];
+
+
 
   useInput((input, key) => {
     if (key.escape) {
-      onReject();
+      onDeny();
       return;
     }
 
     if (key.return) {
-      if (selected === 'yes') {
-        onConfirm();
+      if (selected === 0) {
+        onAllow();
+      } else if (selected === 1) {
+        onAllowAndRemember();
       } else {
-        onReject();
+        onExplain();
       }
       return;
     }
 
-    if (key.leftArrow || key.rightArrow || input === 'y' || input === 'n') {
-      if (input === 'y' || key.leftArrow) {
-        setSelected('yes');
-      } else if (input === 'n' || key.rightArrow) {
-        setSelected('no');
-      } else {
-        setSelected(prev => prev === 'yes' ? 'no' : 'yes');
-      }
+    if (key.leftArrow) {
+      setSelected(prev => Math.max(0, prev - 1));
+    } else if (key.rightArrow) {
+      setSelected(prev => Math.min(options.length - 1, prev + 1));
     }
   });
 
@@ -57,26 +72,21 @@ export function ConfirmationPrompt({ title, message, details, onConfirm, onRejec
       <Box marginTop={1}>
         <Text>
           {'  '}
-          <Text 
-            bold={selected === 'yes'} 
-            color={selected === 'yes' ? 'green' : 'white'}
-            inverse={selected === 'yes'}
-          >
-            {' Yes '}
-          </Text>
-          {'  '}
-          <Text 
-            bold={selected === 'no'} 
-            color={selected === 'no' ? 'red' : 'white'}
-            inverse={selected === 'no'}
-          >
-            {' No '}
-          </Text>
+          {options.map((option, i) => (
+            <Text 
+              key={option}
+              bold={selected === i} 
+              color={selected === i ? 'green' : 'white'}
+              inverse={selected === i}
+            >
+              {` ${option} `}
+            </Text>
+          ))}
         </Text>
       </Box>
       
       <Box marginTop={1}>
-        <Text dimColor>Use ← → or Y/N to choose, Enter to confirm, Esc to cancel</Text>
+        <Text dimColor>Use ← → to choose, Enter to confirm, Esc to cancel</Text>
       </Box>
     </Box>
   );

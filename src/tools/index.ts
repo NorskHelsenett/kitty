@@ -41,7 +41,7 @@ export const builtInTools = [
   },
   {
     name: 'write_file',
-    description: 'Write content to a file. Creates the file if it doesn\'t exist.',
+    description: 'Write content to a file. Creates the file if it doesn\'t exist. IMPORTANT: Only use this when the user explicitly asks you to create or modify a file. Do NOT use this to save analysis, summaries, or responses - those should be returned directly in your message to the user.',
     input_schema: {
       type: 'object',
       properties: {

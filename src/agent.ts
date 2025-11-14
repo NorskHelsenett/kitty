@@ -1,12 +1,12 @@
 import OpenAI from 'openai';
 import { getTools } from './tools/index.js';
-import { executeTool, registerCustomTool } from './tools/executor.js';
+import { executeTool, registerCustomTool, unregisterCustomTool } from './tools/executor.js';
 import { Orchestrator, ThinkingStep, Task, type ReasoningMode } from './orchestrator.js';
 import { ProjectContext, loadProjectContext, buildSystemMessageWithContext } from './project-context.js';
 import { TokenManager, TokenUsage } from './token-manager.js';
-import { PluginManager } from './plugin-manager.js';
+import { PluginManager, type PluginMetadata } from './plugin-manager.js';
 import { AgentManager } from './agent-manager.js';
-import { config, getDefaultModel } from './config.js';
+import { config, getDefaultModel, setDefaultModel } from './config.js';
 
 interface AgentSessionOptions {
   systemPrompt?: string;
@@ -94,7 +94,7 @@ export class AIAgent {
       if (errorCode === 'ECONNREFUSED' || errorCode === 'ENOTFOUND' ||
           error?.message?.includes('ECONNREFUSED') || error?.message?.includes('ENOTFOUND')) {
         warnings.push(
-          '⚠️  Could not connect to API server during initialization.\n' +
+          '⚠️ Could not connect to API server during initialization.  \n' +
           '   Using default settings (128k context window).\n\n' +
           '💡 To fix this, ensure OPENAI_BASE_URL is set correctly:\n' +
           '   Example: export OPENAI_BASE_URL=http://localhost:11434/v1\n\n' +
@@ -109,7 +109,7 @@ export class AIAgent {
         );
       } else {
         warnings.push(
-          '⚠️  Could not connect to API server during initialization.\n' +
+          '⚠️ Could not connect to API server during initialization.  \n' +
           `   Error: ${error?.message || String(error)}\n` +
           '   Using default settings (128k context window).\n\n' +
           '💡 Please check your OPENAI_BASE_URL and OPENAI_API_KEY environment variables.'
@@ -135,12 +135,41 @@ export class AIAgent {
     return this.projectContext;
   }
 
+  async refreshProjectContext(): Promise<ProjectContext> {
+    this.projectContext = await loadProjectContext();
+    return this.projectContext;
+  }
+
   getTokenUsage(): TokenUsage {
     return this.tokenManager.getUsage(this.conversationHistory);
   }
 
   getTokenManager(): TokenManager {
     return this.tokenManager;
+  }
+
+  async listPlugins(): Promise<PluginMetadata[]> {
+    return this.pluginManager.listInstalled();
+  }
+
+  async setPluginEnabled(pluginName: string, enabled: boolean): Promise<void> {
+    if (enabled) {
+      await this.pluginManager.enable(pluginName);
+      const plugin = this.pluginManager.getPlugin(pluginName);
+      if (plugin) {
+        for (const tool of plugin.tools) {
+          registerCustomTool(tool);
+        }
+      }
+    } else {
+      const plugin = this.pluginManager.getPlugin(pluginName);
+      if (plugin) {
+        for (const tool of plugin.tools) {
+          unregisterCustomTool(tool.name);
+        }
+      }
+      await this.pluginManager.disable(pluginName);
+    }
   }
 
   configureSession(options: AgentSessionOptions): void {
@@ -202,6 +231,8 @@ export class AIAgent {
    */
   async setModel(modelName: string): Promise<void> {
     this.modelName = modelName;
+    this.orchestrator.setModel(modelName);
+    setDefaultModel(modelName);
 
     // Update token manager with new model info
     try {
@@ -442,7 +473,7 @@ export class AIAgent {
     userMessage: string,
     onTextChunk?: (text: string) => void
   ): Promise<void> {
-    const baseSystemMessage = 'You are a helpful AI assistant. Format responses using Markdown. Keep responses concise and clear. Always provide a complete and full response, even for simple questions.';
+    const baseSystemMessage = 'You are a helpful AI assistant. Format responses using Markdown. Keep responses concise and clear. Always provide a complete and full response, even for simple questions.\n\nIMPORTANT: Only use write_file when the user explicitly asks you to create or modify a file. Do NOT write files to save analysis, summaries, or documentation unless specifically requested. Instead, respond directly with the information.';
     const sessionAwareBase = this.buildSystemPrompt(baseSystemMessage);
     const systemContent = this.projectContext
       ? buildSystemMessageWithContext(this.projectContext, sessionAwareBase)
@@ -528,11 +559,14 @@ export class AIAgent {
 
 Format your response using Markdown for readability. Be concise but thorough. If tasks failed, explain what went wrong.
 
-IMPORTANT: 
+IMPORTANT:
 - Analyze and synthesize the task results - don't just list them. Provide insights and answer the user's original question.
 - If a file was written successfully (write_file task succeeded), do NOT output the file content in your response
 - Just confirm what was created, e.g., "I've created KITTY.md with project documentation including overview, commands, and coding rules."
-- Focus on what was accomplished, not reproducing file contents`;
+- Focus on what was accomplished, not reproducing file contents
+- Only use write_file when the user explicitly asks you to create or modify a file
+- Do NOT write files to save analysis, summaries, or documentation unless specifically requested
+- When analyzing files or code, respond directly with your findings - do not write them to a file`;
     const sessionAwareBase = this.buildSystemPrompt(baseSystemMessage);
     const systemContent = this.projectContext
       ? buildSystemMessageWithContext(this.projectContext, sessionAwareBase)

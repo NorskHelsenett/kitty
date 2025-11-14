@@ -12,6 +12,12 @@ A terminal-first AI chat client with agent and plugin support, rendered with Ink
 
 </div>
 
+> [!WARNING]
+>
+> **Kitty can execute commands, access and modify files, and run arbitrary processes on your computer.**
+>
+> Use of this tool is entirely at your own risk. You are responsible for reviewing actions, protecting sensitive data, and backing up important files. The project authors, contributors, and Norskhelsenett are not liable for any data loss, damages, or other consequences resulting from use of Kitty. Run in a safe environment or sandbox if you are unsure.
+
 ## Quick Install
 
 ```bash
@@ -23,6 +29,16 @@ Then set the access with these variables:
 ```bash
 export OPENAI_BASE_URL="https://your-openwebui-instance/api"
 export OPENAI_API_KEY="your-api-key-from-ollama"
+```
+
+### Sandboxed usage
+
+The best way to use kitty in a sandboxed environment is to execute the docker file directly with a read-only mount. (This wont stop git commands though)
+
+```bash
+docker build -t kitty .
+
+docker run --rm -it --volume "$(pwd)":/wrk:ro -e OPENAI_BASE_URL="http://host.docker.internal:11434" kitty
 ```
 
 ## Features
@@ -115,8 +131,7 @@ Inside the TUI, you can use these commands:
 | `/model` | Switch the active AI model |
 | `/agents` | Manage and run custom agents |
 | `/plugins` | Enable or disable installed plugins |
-| `/init` | Generate `KITTY.md` project context (auto-run on first use) |
-| `/reinit` | Regenerate `KITTY.md` from scratch, overwriting the existing file |
+| `/init` | Generate or refresh `KITTY.md` project context (auto-run on first use) |
 | `/clear` | Clear the visible conversation history |
 
 **Keyboard Shortcuts**
@@ -144,7 +159,7 @@ Kitty can automatically generate and maintain a `KITTY.md` file that captures yo
 1. Run `/init` inside the TUI (or it runs automatically on first launch)
 2. Kitty scans your project directory and generates `KITTY.md`
 3. On every new chat, the agent loads this context for richer, more accurate answers
-4. Update anytime with `/reinit` to refresh the project snapshot
+4. Run `/init` anytime to refresh the project snapshot
 
 This is especially useful for:
 - Understanding project structure without having to explain it each time

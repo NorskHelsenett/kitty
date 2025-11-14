@@ -17,8 +17,7 @@ const AVAILABLE_COMMANDS: CommandSuggestion[] = [
   { command: '/model', description: 'Select which AI model to use' },
   { command: '/agents', description: 'Select which agents to enable/disable' },
   { command: '/plugins', description: 'Select which plugins to enable/disable' },
-  { command: '/init', description: 'Create a KITTY.md file for project context' },
-  { command: '/reinit', description: 'Regenerate KITTY.md (overwrites existing)' },
+  { command: '/init', description: 'Create or refresh the KITTY.md project context' },
   { command: '/help', description: 'Show this help message' },
 ];
 

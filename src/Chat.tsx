@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, useReducer } from 'react';
-import { Box, Text, useInput, useApp, Static } from 'ink';
+import { Box, Text, useInput, useApp, Static, useStdout } from 'ink';
 import chalk from 'chalk';
 import { marked } from 'marked';
 import { markedTerminal } from 'marked-terminal';
+import wordWrap from 'word-wrap';
 import type { AIAgent } from './agent.js';
 import { setConfirmationCallback } from './tools/executor.js';
 import { CommandInput } from './components/CommandInput.js';
@@ -10,9 +11,12 @@ import { TaskList, Task as TaskType } from './components/TaskList.js';
 import { SelectionMenu, SelectionItem } from './components/SelectionMenu.js';
 import { ErrorDialog, ErrorDialogProps, getErrorDialogProps } from './components/ErrorDialog.js';
 import { WarningDialog } from './components/WarningDialog.js';
+import { ConfirmationPrompt } from './components/ConfirmationPrompt.js';
 
-// Configure marked for terminal output
-marked.use(markedTerminal({
+
+// Configure marked for terminal output - will be reconfigured per message with terminal width
+// This is the default configuration
+const getMarkedTerminalConfig = (width: number = 80) => ({
   code: chalk.yellow,
   blockquote: chalk.gray.italic,
   heading: chalk.cyan.bold,
@@ -20,7 +24,52 @@ marked.use(markedTerminal({
   em: chalk.italic,
   codespan: chalk.yellow,
   link: chalk.blue.underline,
-}) as any);
+  width: width - 6, // Account for padding and prefix
+  reflowText: true,
+  // Compact paragraph spacing - single newline instead of double
+  paragraph: (text: string) => text + '\n',
+  // Simpler list formatting
+  list: (body: string) => body,
+  listitem: (text: string) => '  • ' + text.trimEnd() + '\n',
+});
+
+/**
+ * Preprocesses markdown to ensure proper spacing:
+ * - Adds newline before headers (if not already present)
+ * - Removes newlines between list items
+ */
+function preprocessMarkdown(content: string): string {
+  const lines = content.split('\n');
+  const result: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const prevLine = i > 0 ? lines[i - 1] : '';
+
+    // Check if current line is a header (starts with #)
+    const isHeader = /^#{1,6}\s/.test(line);
+
+    // Add newline before headers if previous line is not empty and not already spaced
+    if (isHeader && prevLine.trim() !== '' && result.length > 0) {
+      // Check if we already added a blank line
+      if (result[result.length - 1].trim() !== '') {
+        result.push('');
+      }
+    }
+
+    // Add the current line
+    result.push(line);
+  }
+
+  return result.join('\n');
+}
+
+// Collapse runs of blank lines so assistant replies stay compact
+const compactAssistantContent = (content: string): string => {
+  if (!content) return '';
+  const normalized = content.replace(/\r\n/g, '\n');
+  return normalized.replace(/\n(?:[ \t]*\n){2,}/g, '\n\n');
+};
 
 interface Message {
   id: string;
@@ -29,6 +78,58 @@ interface Message {
   timestamp: number;
   thinkingType?: 'planning' | 'reflection' | 'decision';
 }
+
+const THINKING_TAGS = ['think', 'reasoning', 'reason'];
+const THINKING_TAG_PATTERN = new RegExp(`</?(${THINKING_TAGS.join('|')})>`, 'g');
+const THINKING_INDENT = '    '; // Treat four spaces as a visual tab inside Ink
+
+const cleanThinkingContent = (content: string | undefined): string => {
+  if (!content) return '';
+  return content.replace(THINKING_TAG_PATTERN, '').replace(/\s+/g, ' ').trim();
+};
+
+const formatThinkingLabel = (type?: Message['thinkingType']): string => {
+  switch (type) {
+    case 'planning':
+      return 'Planning';
+    case 'decision':
+      return 'Decision';
+    case 'reflection':
+      return 'Reflection';
+    default:
+      return 'Thinking';
+  }
+};
+
+const getThinkingLabelColor = (type?: Message['thinkingType']): string => {
+  switch (type) {
+    case 'planning':
+      return 'cyan';
+    case 'decision':
+      return 'yellow';
+    case 'reflection':
+      return 'green';
+    default:
+      return 'magenta';
+  }
+};
+
+const shortenThinkingText = (content: string, maxLength: number): string => {
+  if (!content || content.length <= maxLength) {
+    return content;
+  }
+  return `${content.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+};
+
+const summarizeThinkingGoal = (steps: Message[]): string => {
+  for (const step of steps) {
+    const cleaned = cleanThinkingContent(step.content);
+    if (!cleaned) continue;
+    const summaryCandidate = cleaned.split(/(?<=[.!?])\s+/)[0] || cleaned;
+    return shortenThinkingText(summaryCandidate, 60);
+  }
+  return '';
+};
 
 interface ChatProps {
   agent: AIAgent;
@@ -57,7 +158,7 @@ const getInitialMessages = (modelName: string = 'Loading...', currentPath: strin
 ██╔═██╗ ██║   ██║      ██║     ╚██╔╝
 ██║  ██╗██║   ██║      ██║      ██║
 ╚═╝  ╚═╝╚═╝   ╚═╝      ╚═╝      ╚═╝
-Welcome to KITTY -  Your AI-powered assistant!
+Welcome to KITTY -  Your KI-powered assistant!
     ${APP_VERSION}       •        ${modelName}
 ${currentPath}
                                                   `,
@@ -89,35 +190,220 @@ const messagesReducer = (state: Message[], action: MessageAction): Message[] => 
   }
 };
 
+type DisplayItem =
+  | { kind: 'message'; id: string; message: Message }
+  | { kind: 'thinking-group'; id: string; steps: Message[] };
+
+const groupMessagesForDisplay = (msgs: Message[]): DisplayItem[] => {
+  const items: DisplayItem[] = [];
+  let thinkingBuffer: Message[] = [];
+
+  const flushThinking = () => {
+    if (thinkingBuffer.length === 0) return;
+    const buffer = thinkingBuffer;
+    thinkingBuffer = [];
+    const firstId = buffer[0]?.id ?? `thinking-${Date.now()}`;
+    items.push({
+      kind: 'thinking-group',
+      id: `${firstId}-group`,
+      steps: buffer,
+    });
+  };
+
+  for (const msg of msgs) {
+    if (msg.role === 'thinking') {
+      thinkingBuffer.push(msg);
+      continue;
+    }
+
+    flushThinking();
+    items.push({ kind: 'message', id: msg.id, message: msg });
+  }
+
+  flushThinking();
+  return items;
+};
+
+const ThinkingGroupItem = React.memo(({ steps, debugMode }: { steps: Message[]; debugMode: boolean }) => {
+  const { stdout } = useStdout();
+  const terminalWidth = stdout ? stdout.columns : 80;
+  const contentWidth = terminalWidth - 6;
+
+  const processedSteps = steps
+    .map(step => {
+      const cleanContent = cleanThinkingContent(step.content);
+      return {
+        ...step,
+        cleanContent,
+        shortContent: shortenThinkingText(cleanContent, Math.max(contentWidth - 10, 40)),
+      };
+    })
+    .filter(step => step.cleanContent.length > 0);
+
+  const summary = summarizeThinkingGoal(processedSteps);
+
+  if (processedSteps.length === 0) {
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color="magenta" dimColor>○ Thinking</Text>
+        {debugMode && (
+          <Text color="magenta" dimColor>
+            {THINKING_INDENT}(no thinking content)
+          </Text>
+        )}
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Text color="magenta" dimColor>
+        ○ Thinking
+        {/* {summary ? `○ Thinking • ${summary}` : '○ Thinking'} */}
+      </Text>
+      <Box flexDirection="column">
+        {processedSteps.map(step => {
+          const label = `${formatThinkingLabel(step.thinkingType)} • `;
+          const labelColor = getThinkingLabelColor(step.thinkingType);
+          const wrapWidth = Math.max(contentWidth - THINKING_INDENT.length - label.length, 20);
+          const wrapped = wordWrap(step.shortContent, { width: wrapWidth, indent: '' });
+          const lines = wrapped.split('\n');
+
+          return (
+            <Box key={step.id} flexDirection="column">
+              {lines.map((line, index) => (
+                <Box key={`${step.id}-line-${index}`} flexDirection="row">
+                  <Text color="magenta" dimColor>{THINKING_INDENT}</Text>
+                  <Text color={labelColor} bold={step.thinkingType === 'planning'}>
+                    {index === 0 ? '└' + label : ' '.repeat(label.length)}
+                  </Text>
+                  <Text color="white">{line}</Text>
+                </Box>
+              ))}
+            </Box>
+          );
+        })}
+      </Box>
+    </Box>
+  );
+});
+ThinkingGroupItem.displayName = 'ThinkingGroupItem';
+
 // Memoized message component to prevent re-rendering on input changes
 const MessageItem = React.memo(({ msg, debugMode }: { msg: Message; debugMode: boolean }) => {
+  const { stdout } = useStdout();
+  const terminalWidth = stdout ? stdout.columns : 80;
+  const contentWidth = terminalWidth - 6; // 2 paddingX on each side + 2 for prefix
+
+  // Configure marked for this specific message with proper terminal width
+  React.useEffect(() => {
+    marked.use(markedTerminal(getMarkedTerminalConfig(terminalWidth)) as any);
+  }, [terminalWidth]);
+
   if (msg.role === 'none') {
     return <Text>{msg.content}</Text>;
   }
 
-  // Normalize content: replace 3+ consecutive newlines with just 2 newlines (one blank line)
-  const content = (msg.content || '').replace(/\n{3,}/g, '\n\n');
-  const isThinking = msg.role === 'thinking';
-  const color = msg.role === 'user' ? 'cyan' :
-    msg.role === 'assistant' ? 'green' :
-      msg.role === 'thinking' ? 'gray' :
-        'yellow';
-  const prefix = msg.role === 'user' ? '› ' :
-    msg.role === 'assistant' ? '● ' :
-      msg.role === 'thinking' ? '○○○ ' :
-        '• ';
-  const label = msg.role === 'user' ? 'You' :
-    msg.role === 'assistant' ? 'KITTY' :
-      msg.role === 'thinking' ? `Thinking (${msg.thinkingType || 'processing'})` :
-        'System';
+  // Handle thinking messages separately for custom formatting
+  if (msg.role === 'thinking') {
+    const cleanContent = cleanThinkingContent(msg.content);
+    const wrappedContent = wordWrap(cleanContent, { width: contentWidth, indent: '' });
+
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color="magenta" dimColor>
+          ○ Thinking ({msg.thinkingType || 'processing'})
+        </Text>
+        {cleanContent && cleanContent.trim().length > 0 ? (
+          <Text color="magenta" dimColor>{wrappedContent}</Text>
+        ) : (
+          debugMode && <Text dimColor>(no content - {msg.content.length} chars)</Text>
+        )}
+      </Box>
+    );
+  }
+
+  // Handle assistant messages with <think> blocks and markdown formatting
+  if (msg.role === 'assistant') {
+    const content = (msg.content || '');
+
+    // The welcome message is plain text and should not be parsed as Markdown.
+    if (msg.id === 'welcome') {
+      return (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color="green" bold>● KITTY</Text>
+          <Text>{content}</Text>
+        </Box>
+      );
+    }
+
+    // Only apply special parsing if tags are present
+    if (content.includes('<think>') || content.includes('</think>')) {
+      const parts = content.split(/(<\/?think>)/); // Capture delimiters
+      let inThinkBlock = false; // State variable
+
+      return (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color="green" bold>● KITTY</Text>
+          <Box flexDirection="column">
+            {parts.map((part, index) => {
+              if (part === '<think>') {
+                inThinkBlock = true;
+                return null; // Hide the tag itself
+              }
+              if (part === '</think>') {
+                inThinkBlock = false;
+                return <Text key={`think-end-${index}`}>{'\n'}</Text>;
+              }
+              if (!part) return null; // Handle empty parts from split
+
+              // For thinking parts, don't apply markdown - just wrap and dim
+              if (inThinkBlock) {
+                const compactPart = part.replace(/\n{2,}/g, '\n');
+                const wrappedPart = wordWrap(compactPart, { width: contentWidth, indent: '' });
+                return <Text key={index} color="green" dimColor>{wrappedPart}</Text>;
+              }
+
+              // For non-thinking parts, apply markdown formatting
+              const processedPart = preprocessMarkdown(part);
+              const renderedPart = marked.parse(processedPart, { async: false }) as string;
+              return <Text key={index}>{renderedPart}</Text>;
+            })}
+          </Box>
+        </Box>
+      );
+    }
+
+    // For assistant messages without <think> blocks, apply markdown formatting
+    const processedContent = preprocessMarkdown(content);
+    const renderedContent = marked.parse(processedContent, { async: false }) as string;
+
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color="green" bold>● KITTY</Text>
+        {renderedContent && renderedContent.trim().length > 0 ? (
+          <Text>{renderedContent}</Text>
+        ) : (
+          debugMode && <Text dimColor>(no content - {content.length} chars)</Text>
+        )}
+      </Box>
+    );
+  }
+
+  // Handle user and system messages (assistant messages are handled above)
+  const content = (msg.content || '').replace(/\n+/g, '\n');
+  const wrappedContent = wordWrap(content, { width: contentWidth, indent: '' });
+  const color = msg.role === 'user' ? 'cyan' : 'yellow';
+  const prefix = msg.role === 'user' ? '› ' : '• ';
+  const label = msg.role === 'user' ? 'You' : 'System';
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color={color} bold={!isThinking} dimColor={isThinking}>
+      <Text color={color} bold>
         {prefix}{label}
       </Text>
       {content && content.trim().length > 0 ? (
-        <Text color={color} dimColor={isThinking} wrap="wrap">{content}</Text>
+        <Text color={color}>{wrappedContent}</Text>
       ) : (
         debugMode && <Text dimColor>(no content - {content.length} chars)</Text>
       )}
@@ -136,10 +422,14 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [layoutKey, setLayoutKey] = useState(0);
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [modelItems, setModelItems] = useState<SelectionItem[]>([]);
+  const [showPluginMenu, setShowPluginMenu] = useState(false);
+  const [pluginItems, setPluginItems] = useState<SelectionItem[]>([]);
   const [messagesInitialized, setMessagesInitialized] = useState(false);
   const [clearInputField, setClearInputField] = useState(false);
   const [errorDialog, setErrorDialog] = useState<ErrorDialogProps | null>(null);
   const [warningMessage, setWarningMessage] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<any>(null);
+  const [allowedCommands, setAllowedCommands] = useState(new Set<string>());
   const { exit } = useApp();
 
   // Keyboard control state
@@ -184,19 +474,50 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
     (async () => {
       try {
         const result = await agent.initialize();
+        const currentModel = agent.getCurrentModel();
 
         // Set up tool confirmation callback
         setConfirmationCallback(async (toolName: string, input: any, details?: string) => {
-          // For now, auto-approve all tools (we can add a confirmation UI later)
-          return true;
+          const commandKey = `${toolName}:${JSON.stringify(input)}`;
+          if (allowedCommands.has(commandKey)) {
+            return true;
+          }
+
+          return new Promise<boolean>((resolve) => {
+            const message = `The AI is requesting to execute the following tool:`;
+            const fullDetails = `Tool: ${toolName}\n${details || ''}`;
+
+            setConfirmation({
+              title: 'Tool Execution Request',
+              message,
+              details: fullDetails,
+              onAllow: () => {
+                setConfirmation(null);
+                resolve(true);
+              },
+              onAllowAndRemember: () => {
+                setConfirmation(null);
+                setAllowedCommands(prev => new Set(prev).add(commandKey));
+                resolve(true);
+              },
+              onExplain: () => {
+                setConfirmation(null);
+                addMessage('system', `The AI wanted to run the tool '${toolName}'. You can now guide the AI to do something different.`);
+                resolve(false);
+              },
+              onDeny: () => {
+                setConfirmation(null);
+                resolve(false);
+              },
+            });
+          });
         });
 
         // Update the header message with actual model name and current path
         if (!messagesInitialized) {
-          const modelName = agent.getCurrentModel();
           const currentPath = process.cwd();
 
-          const updatedMessages = getInitialMessages(modelName, currentPath);
+          const updatedMessages = getInitialMessages(currentModel, currentPath);
 
           // Clear existing messages and add the new ones with proper information
           dispatch({ type: 'CLEAR' });
@@ -212,6 +533,34 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
           }
 
           setMessagesInitialized(true);
+        }
+
+        // Ensure the configured model is actually available
+        try {
+          const availableModels = await agent.listAvailableModels();
+          const modelExists = availableModels.some(model => model.id === currentModel);
+
+          if (!modelExists) {
+            const warningText = availableModels.length > 0
+              ? `⚠️  The configured model "${currentModel}" is not available. Please select one of the available models to continue.`
+              : `⚠️  The configured model "${currentModel}" is not available, and no models could be fetched. Verify your API server and credentials, then choose a model via /model once available.`;
+
+            setWarningMessage(prev => prev ? `${prev}\n\n${warningText}` : warningText);
+
+            if (availableModels.length > 0) {
+              const items: SelectionItem[] = availableModels.map(model => ({
+                id: model.id,
+                name: model.id,
+                description: model.owned_by || 'AI Model',
+                enabled: false,
+              }));
+              setModelItems(items);
+              setShowModelMenu(true);
+            }
+          }
+        } catch (modelListError) {
+          const warningText = `⚠️  Tried to verify the configured model "${currentModel}", but listing models failed: ${modelListError instanceof Error ? modelListError.message : String(modelListError)}.`;
+          setWarningMessage(prev => prev ? `${prev}\n\n${warningText}` : warningText);
         }
 
         setInitialized(true);
@@ -272,10 +621,11 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const addMessage = useCallback((role: Message['role'], content: string, thinkingType?: 'planning' | 'reflection' | 'decision') => {
     // Guard against null/undefined content
     const safeContent = content || '';
+    const normalizedContent = role === 'assistant' ? compactAssistantContent(safeContent) : safeContent;
     const id = `msg-${Date.now()}-${messageIdCounter.current++}`;
-    const newMsg = { id, role, content: safeContent, timestamp: Date.now(), thinkingType };
+    const newMsg = { id, role, content: normalizedContent, timestamp: Date.now(), thinkingType };
 
-    logToFile(`ADD_MESSAGE: id=${id}, role=${role}, contentLength=${safeContent.length}, thinkingType=${thinkingType || 'none'}`);
+    logToFile(`ADD_MESSAGE: id=${id}, role=${role}, contentLength=${normalizedContent.length}, thinkingType=${thinkingType || 'none'}`);
 
     dispatch({ type: 'ADD', message: newMsg });
   }, [logToFile]);
@@ -295,15 +645,16 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const updateLastMessage = useCallback((content: string) => {
     const now = Date.now();
     const safeContent = content || '';
+    const normalizedContent = compactAssistantContent(safeContent);
 
-    if (safeContent.length === 0) {
+    if (normalizedContent.length === 0) {
       logToFile('UPDATE_LAST_MESSAGE: Ignoring empty update');
       return;
     }
 
-    logToFile(`UPDATE_LAST_MESSAGE: contentLength=${safeContent.length}`);
+    logToFile(`UPDATE_LAST_MESSAGE: contentLength=${normalizedContent.length}`);
 
-    pendingUpdate.current = safeContent;
+    pendingUpdate.current = normalizedContent;
 
     // Throttle to 300ms for smooth terminal rendering
     const THROTTLE_DELAY = 300;
@@ -341,88 +692,10 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
     setTasks([]);
   }, []);
 
-  const handleModelSelection = useCallback(async (selectedIds: string[]) => {
-    if (selectedIds.length > 0) {
-      const selectedModel = selectedIds[0];
-      try {
-        await agent.setModel(selectedModel);
-        addMessage('system', `Model changed to: ${selectedModel}`);
-      } catch (error) {
-        const errorProps = getErrorDialogProps(error);
-        errorProps.onClose = () => setErrorDialog(null);
-        setErrorDialog(errorProps);
-      }
-    }
-    setShowModelMenu(false);
-  }, [agent, addMessage]);
-
-  const handleModelMenuCancel = useCallback(() => {
-    setShowModelMenu(false);
-  }, []);
-
-  const handleCommand = useCallback(async (command: string) => {
-    const cmd = command.toLowerCase().trim();
-
-    if (cmd === '/help') {
-      addMessage('system', `Available Commands:
-/help - Show this help message
-/model - Select AI model to use
-/agents - Manage agents
-/plugins - Manage plugins
-
-Keyboard Shortcuts:
-ESC - Cancel ongoing request
-Ctrl+C (twice) - Exit application`);
-    } else if (cmd === '/model') {
-      // Fetch available models
-      try {
-        const models = await agent.listAvailableModels();
-        const currentModel = agent.getCurrentModel();
-        const items: SelectionItem[] = models.map(model => ({
-          id: model.id,
-          name: model.id,
-          description: model.owned_by || 'AI Model',
-          enabled: model.id === currentModel
-        }));
-        setModelItems(items);
-        setShowModelMenu(true);
-      } catch (error) {
-        const errorProps = getErrorDialogProps(error);
-        errorProps.onClose = () => setErrorDialog(null);
-        setErrorDialog(errorProps);
-      }
-    } else {
-      addMessage('system', `Unknown command: ${command}`);
-    }
-  }, [agent, addMessage]);
-
-  const handleSubmit = useCallback(async (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed || isProcessing) return;
-
-    // Hide exit prompt if user submits a new prompt
-    setShowExitPrompt(false);
-
-    // Clear completed tasks when starting a new query
-    const allTasksCompleted = tasks.length > 0 && tasks.every(t => t.completed);
-    if (allTasksCompleted) {
-      clearTasks();
-    }
-
-    setIsProcessing(true);
-    streamStartTime.current = Date.now();
-    streamTokenCount.current = 0;
-
-    // Handle slash commands
-    if (trimmed.startsWith('/')) {
-      logToFile(`COMMAND: ${trimmed}`);
-      await handleCommand(trimmed);
-      setIsProcessing(false);
-      return;
-    }
-
-    addMessage('user', trimmed);
-    logToFile(`USER: ${trimmed}`);
+  const executePrompt = useCallback(async (prompt: string, options?: { displayText?: string }) => {
+    const displayContent = options?.displayText ?? prompt;
+    addMessage('user', displayContent);
+    logToFile(`USER: ${prompt}`);
 
     try {
       let fullResponse = '';
@@ -432,7 +705,7 @@ Ctrl+C (twice) - Exit application`);
       abortControllerRef.current = new AbortController();
 
       const chatPromise = agent.chat(
-        trimmed,
+        prompt,
         // Text streaming callback
         (text: string) => {
           if (!text) return; // Do not process empty chunks
@@ -504,9 +777,8 @@ Ctrl+C (twice) - Exit application`);
         logToFile(`FINAL_RESPONSE: ${fullResponse}`);
 
         // Force one final update to ensure we have the complete response
-        // This bypasses throttling to guarantee the last content is shown
         if (fullResponse.length > 0) {
-          dispatch({ type: 'UPDATE_LAST', content: fullResponse });
+          dispatch({ type: 'UPDATE_LAST', content: compactAssistantContent(fullResponse) });
           logToFile(`FINAL_UPDATE: Forced final update with ${fullResponse.length} chars`);
         }
 
@@ -538,14 +810,11 @@ Ctrl+C (twice) - Exit application`);
         const errorProps = getErrorDialogProps(error);
         errorProps.onClose = () => setErrorDialog(null);
         setErrorDialog(errorProps);
-
-        // Don't log to console - error is shown in the UI dialog
-        // console.error('Chat error:', error);
       } else {
         logToFile('CHAT_ABORTED: User cancelled the request');
       }
     } finally {
-      logToFile(`CHAT_END: isProcessing=${isProcessing}, messages.length=${messages.length}`);
+      logToFile(`CHAT_END: messages.length=${messages.length}`);
 
       // Flush any pending updates to ensure the last chunk is rendered
       flushPendingUpdate();
@@ -556,11 +825,188 @@ Ctrl+C (twice) - Exit application`);
         updateTimeout.current = null;
         logToFile('CLEANUP: Cleared pending update timeout');
       }
+    }
+  }, [addMessage, logToFile, agent, updateLastMessage, addTask, completeTask, clearTasks, tasks, flushPendingUpdate, setErrorDialog, setLastTokenCount, messages.length]);
 
+  const handleModelSelection = useCallback(async (selectedIds: string[]) => {
+    if (selectedIds.length > 0) {
+      const selectedModel = selectedIds[0];
+      try {
+        await agent.setModel(selectedModel);
+        addMessage('system', `Model changed to: ${selectedModel}`);
+      } catch (error) {
+        const errorProps = getErrorDialogProps(error);
+        errorProps.onClose = () => setErrorDialog(null);
+        setErrorDialog(errorProps);
+      }
+    }
+    setShowModelMenu(false);
+  }, [agent, addMessage]);
+
+  const handleModelMenuCancel = useCallback(() => {
+    setShowModelMenu(false);
+  }, []);
+
+  const handlePluginSelection = useCallback(async (selectedIds: string[]) => {
+    try {
+      const plugins = await agent.listPlugins();
+      const selectedSet = new Set(selectedIds);
+      const enabled: string[] = [];
+      const disabled: string[] = [];
+
+      for (const plugin of plugins) {
+        const shouldEnable = selectedSet.has(plugin.name);
+        if (shouldEnable && !plugin.enabled) {
+          await agent.setPluginEnabled(plugin.name, true);
+          enabled.push(plugin.name);
+        } else if (!shouldEnable && plugin.enabled) {
+          await agent.setPluginEnabled(plugin.name, false);
+          disabled.push(plugin.name);
+        }
+      }
+
+      if (enabled.length === 0 && disabled.length === 0) {
+        addMessage('system', 'Plugin selections unchanged.');
+      } else {
+        const changes: string[] = [];
+        if (enabled.length > 0) {
+          changes.push(`Enabled: ${enabled.join(', ')}`);
+        }
+        if (disabled.length > 0) {
+          changes.push(`Disabled: ${disabled.join(', ')}`);
+        }
+        addMessage('system', `Plugin changes:\n${changes.join('\n')}`);
+      }
+    } catch (error) {
+      const errorProps = getErrorDialogProps(error);
+      errorProps.onClose = () => setErrorDialog(null);
+      setErrorDialog(errorProps);
+    } finally {
+      setShowPluginMenu(false);
+    }
+  }, [agent, addMessage, setErrorDialog, setShowPluginMenu]);
+
+  const handlePluginMenuCancel = useCallback(() => {
+    setShowPluginMenu(false);
+  }, []);
+
+  const handleCommand = useCallback(async (command: string) => {
+    const cmd = command.toLowerCase().trim();
+
+    if (cmd === '/help') {
+      addMessage('system', `Available Commands:
+/help - Show this help message
+/init - Generate or refresh KITTY.md project context
+/model - Select AI model to use
+/agents - Manage agents
+/plugins - Manage plugins
+
+Keyboard Shortcuts:
+ESC - Cancel ongoing request
+Ctrl+C (twice) - Exit application`);
+    } else if (cmd === '/init') {
+      const context = agent.getProjectContext();
+      const hasExistingKitty = !!context?.hasKittyMd;
+      const initPrompt = `You are Kitty's project context generator. ${hasExistingKitty
+        ? 'Refresh the existing KITTY.md with an up-to-date project snapshot.'
+        : 'Create a new KITTY.md that captures the current project snapshot.'
+        }
+
+Requirements:
+- Analyze the repository structure, key configs, dependencies, scripts, and coding conventions.
+- Organize the documentation into clear sections (overview, tooling, commands, coding standards, etc.).
+- Always regenerate the entire KITTY.md file from scratch when this command is run.
+- Use the write_file tool to overwrite KITTY.md (creating it if missing). Do not append or partially edit.
+- Keep the content concise but comprehensive so it can serve as authoritative project context.
+
+After writing the file, confirm the update in your final response.`;
+
+      await executePrompt(initPrompt, { displayText: '/init' });
+
+      try {
+        const refreshed = await agent.refreshProjectContext();
+        if (refreshed.hasKittyMd) {
+          addMessage('system', 'Project context reloaded from KITTY.md');
+        } else {
+          addMessage('system', 'KITTY.md was not found after initialization. Please rerun /init.');
+        }
+      } catch (error) {
+        addMessage('system', `Project context could not be reloaded: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else if (cmd === '/plugins') {
+      try {
+        const pluginMetadata = await agent.listPlugins();
+        if (pluginMetadata.length === 0) {
+          addMessage('system', 'No plugins installed. Use `kitty plugin install <source>` from the shell first.');
+          return;
+        }
+
+        const items = pluginMetadata.map(plugin => ({
+          id: plugin.name,
+          name: plugin.name,
+          description: plugin.description || 'No description provided',
+          enabled: plugin.enabled,
+        }));
+
+        setPluginItems(items);
+        setShowPluginMenu(true);
+      } catch (error) {
+        const errorProps = getErrorDialogProps(error);
+        errorProps.onClose = () => setErrorDialog(null);
+        setErrorDialog(errorProps);
+      }
+    } else if (cmd === '/model') {
+      // Fetch available models
+      try {
+        const models = await agent.listAvailableModels();
+        const currentModel = agent.getCurrentModel();
+        const items: SelectionItem[] = models.map(model => ({
+          id: model.id,
+          name: model.id,
+          description: model.owned_by || 'AI Model',
+          enabled: model.id === currentModel
+        }));
+        setModelItems(items);
+        setShowModelMenu(true);
+      } catch (error) {
+        const errorProps = getErrorDialogProps(error);
+        errorProps.onClose = () => setErrorDialog(null);
+        setErrorDialog(errorProps);
+      }
+    } else {
+      addMessage('system', `Unknown command: ${command}`);
+    }
+  }, [agent, addMessage, executePrompt, setErrorDialog, setPluginItems, setShowPluginMenu]);
+
+  const handleSubmit = useCallback(async (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || isProcessing) return;
+
+    setShowExitPrompt(false);
+
+    const allTasksCompleted = tasks.length > 0 && tasks.every(t => t.completed);
+    if (allTasksCompleted) {
+      clearTasks();
+    }
+
+    setIsProcessing(true);
+    streamStartTime.current = Date.now();
+    streamTokenCount.current = 0;
+
+    try {
+      if (trimmed.startsWith('/')) {
+        logToFile(`COMMAND: ${trimmed}`);
+        await handleCommand(trimmed);
+        return;
+      }
+
+      await executePrompt(trimmed);
+    } finally {
+      logToFile(`REQUEST_COMPLETE: input="${trimmed}"`);
       setIsProcessing(false);
       abortControllerRef.current = null;
     }
-  }, [isProcessing, messages.length, agent, addMessage, updateLastMessage, logToFile, addTask, completeTask, clearTasks, tasks, handleCommand]);
+  }, [isProcessing, tasks, clearTasks, setShowExitPrompt, logToFile, handleCommand, executePrompt]);
 
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
   const isStreaming = isProcessing && lastMessage?.role === 'assistant';
@@ -569,6 +1015,8 @@ Ctrl+C (twice) - Exit application`);
     const msgs = messages.slice(-50);
     return isStreaming ? msgs.slice(0, -1) : msgs;
   }, [messages, isStreaming]);
+
+  const staticDisplayItems = useMemo(() => groupMessagesForDisplay(staticMessages), [staticMessages]);
 
   const streamingMessage = useMemo(() => {
     return isStreaming ? lastMessage : null;
@@ -587,16 +1035,33 @@ Ctrl+C (twice) - Exit application`);
   if (warningMessage) {
     return (
       <WarningDialog
-        title="Connection Warning"
+        title="Connection Warning  "
         message={warningMessage}
         onClose={() => setWarningMessage(null)}
       />
     );
   }
 
+  // Show confirmation prompt if there's a confirmation request
+  if (confirmation) {
+    return <ConfirmationPrompt {...confirmation} />;
+  }
+
   // Show error dialog if there's an error
   if (errorDialog) {
     return <ErrorDialog {...errorDialog} />;
+  }
+
+  // Show plugin selection menu if requested
+  if (showPluginMenu) {
+    return (
+      <SelectionMenu
+        title="Manage Plugins"
+        items={pluginItems}
+        onSubmit={handlePluginSelection}
+        onCancel={handlePluginMenuCancel}
+      />
+    );
   }
 
   // Show model selection menu if requested
@@ -618,11 +1083,15 @@ Ctrl+C (twice) - Exit application`);
         {/* Messages area */}
         <Box flexDirection="column" paddingX={2} paddingY={1}>
           {/* Render static messages */}
-          {staticMessages.length > 0 && (
-            <Static items={staticMessages}>
-              {(msg) => (
-                <Box key={msg.id} flexDirection="column" marginBottom={1}>
-                  <MessageItem msg={msg} debugMode={debugMode} />
+          {staticDisplayItems.length > 0 && (
+            <Static items={staticDisplayItems}>
+              {(item: DisplayItem) => (
+                <Box key={item.id} flexDirection="column" marginBottom={1}>
+                  {item.kind === 'thinking-group' ? (
+                    <ThinkingGroupItem steps={item.steps} debugMode={debugMode} />
+                  ) : (
+                    <MessageItem msg={item.message} debugMode={debugMode} />
+                  )}
                 </Box>
               )}
             </Static>

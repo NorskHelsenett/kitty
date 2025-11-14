@@ -31,19 +31,29 @@ export function getCustomTools(): Tool[] {
 }
 
 // Tools that require confirmation before execution
-const toolsRequiringConfirmation = new Set(['write_file']);
+const toolsRequiringConfirmation = new Set(['write_file', 'execute_command', 'git_operation']);
 
 export async function executeTool(toolName: string, input: any): Promise<string> {
   // Check if tool requires confirmation
   if (toolsRequiringConfirmation.has(toolName) && confirmationCallback) {
     let details = '';
-    
+
     if (toolName === 'write_file') {
       const contentPreview = input.content?.substring(0, 200) || '';
       const truncated = (input.content?.length || 0) > 200 ? '...' : '';
       details = `File: ${input.path}\nSize: ${input.content?.length || 0} bytes\nPreview:\n${contentPreview}${truncated}`;
+    } else if (toolName === 'execute_command') {
+      const workDir = input.working_directory
+        ? path.resolve(input.working_directory)
+        : process.cwd();
+      details = `Command: ${input.command}\nWorking Directory: ${workDir}`;
+    } else if (toolName === 'git_operation') {
+      const repoPath = input.repository_path || 'current directory';
+      const operation = input.operation || input.command || 'unknown';
+      const args = input.args || [];
+      details = `Operation: git ${operation}\nArgs: ${args.join(' ')}\nRepository: ${repoPath}`;
     }
-    
+
     const confirmed = await confirmationCallback(toolName, input, details);
     if (!confirmed) {
       return JSON.stringify({

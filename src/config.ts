@@ -1,3 +1,7 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+
 /**
  * Centralized configuration for AI models and API settings
  */
@@ -24,43 +28,15 @@ export const AVAILABLE_MODELS: Record<string, ModelConfig> = {
     name: 'nhn-large:fast',
     displayName: 'NHN Small (Fast)',
     description: 'Fast, lightweight model for quick tasks',
-    contextWindow: 32000,
-    provider: 'other',
-  },
-  'nhn-medium': {
-    name: 'nhn-medium',
-    displayName: 'NHN Medium',
-    description: 'Balanced model for general tasks',
-    contextWindow: 64000,
-    provider: 'other',
-  },
-  'nhn-large:slow': {
-    name: 'nhn-large:slow',
-    displayName: 'NHN Large (Slow)',
-    description: 'Powerful model for deep analysis',
     contextWindow: 128000,
     provider: 'other',
   },
-  'gpt-3.5-turbo': {
-    name: 'gpt-3.5-turbo',
-    displayName: 'GPT-3.5 Turbo',
-    description: 'OpenAI fast model',
-    contextWindow: 16385,
-    provider: 'openai',
-  },
-  'gpt-4': {
-    name: 'gpt-4',
-    displayName: 'GPT-4',
-    description: 'OpenAI most capable model',
-    contextWindow: 8192,
-    provider: 'openai',
-  },
-  'gpt-4-turbo': {
-    name: 'gpt-4-turbo',
-    displayName: 'GPT-4 Turbo',
-    description: 'OpenAI fast and capable model',
+  'nhn-small:fast': {
+    name: 'nhn-small:fast',
+    displayName: 'NHN Small (Fast)',
+    description: 'Fast, lightweight model for quick tasks',
     contextWindow: 128000,
-    provider: 'openai',
+    provider: 'other',
   },
 };
 
@@ -69,14 +45,72 @@ export const AVAILABLE_MODELS: Record<string, ModelConfig> = {
  */
 class ConfigManager {
   private config: APIConfig;
+  private configPath: string;
 
   constructor() {
-    // Initialize from environment variables
+    // Define config path based on environment
+    const isProduction = process.env.NODE_ENV === 'production';
+    const configDir = isProduction
+      ? path.join(os.homedir(), '.kitty')
+      : path.join(os.tmpdir(), '.kitty');
+    this.configPath = path.join(configDir, 'config.json');
+
+    // Set default configuration
     this.config = {
-      baseURL: process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434',
-      apiKey: process.env.OPENAI_API_KEY || '',
-      defaultModel: process.env.DEFAULT_MODEL || 'nhn-large:fast',
+      baseURL: 'http://host.docker.internal:22434',
+      apiKey: '',
+      defaultModel: 'nhn-large:fast',
     };
+
+    // Load from file, which only contains the model
+    this.loadConfig();
+
+    // Override with environment variables
+    if (process.env.OPENAI_BASE_URL) {
+      this.config.baseURL = process.env.OPENAI_BASE_URL;
+    }
+    if (process.env.OPENAI_API_KEY) {
+      this.config.apiKey = process.env.OPENAI_API_KEY;
+    }
+    if (process.env.DEFAULT_MODEL) {
+      this.config.defaultModel = process.env.DEFAULT_MODEL;
+    }
+
+    // Validate the model
+    if (!this.isModelAvailable(this.config.defaultModel)) {
+      const availableModels = this.getAvailableModels();
+      if (availableModels.length > 0) {
+        this.config.defaultModel = availableModels[0].name;
+      }
+    }
+  }
+
+  private loadConfig() {
+    try {
+      if (fs.existsSync(this.configPath)) {
+        const fileContent = fs.readFileSync(this.configPath, 'utf-8');
+        const savedConfig = JSON.parse(fileContent);
+        if (savedConfig.defaultModel) {
+          this.config.defaultModel = savedConfig.defaultModel;
+        }
+      }
+    } catch (error) {
+      // Ignore errors, use default/env config
+    }
+  }
+
+  private saveConfig() {
+    try {
+      const configDir = path.dirname(this.configPath);
+      if (!fs.existsSync(configDir)) {
+        fs.mkdirSync(configDir, { recursive: true });
+      }
+      // Only store the model
+      const configToSave = { defaultModel: this.config.defaultModel };
+      fs.writeFileSync(this.configPath, JSON.stringify(configToSave, null, 2));
+    } catch (error) {
+      // Ignore errors
+    }
   }
 
   /**
@@ -122,19 +156,23 @@ class ConfigManager {
   }
 
   /**
-   * Set default model
+   * Set default model and save it
    */
   setDefaultModel(modelName: string): void {
     this.config.defaultModel = modelName;
+    this.saveConfig();
   }
 
   /**
-   * Update entire configuration
+   * Update configuration (only model is saved)
    */
   updateConfig(config: Partial<APIConfig>): void {
     if (config.baseURL !== undefined) this.config.baseURL = config.baseURL;
     if (config.apiKey !== undefined) this.config.apiKey = config.apiKey;
-    if (config.defaultModel !== undefined) this.config.defaultModel = config.defaultModel;
+    if (config.defaultModel !== undefined) {
+      this.config.defaultModel = config.defaultModel;
+      this.saveConfig();
+    }
   }
 
   /**
