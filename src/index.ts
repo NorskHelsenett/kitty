@@ -5,7 +5,7 @@ import { AIAgent } from './agent.js';
 import { PluginManager } from './plugin-manager.js';
 import { AgentManager, type AgentWorkflow, type AgentModelConfig } from './agent-manager.js';
 import type { Tool } from './plugins.js';
-import { config } from './config.js';
+import { config, initializeConfig } from './config.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { executeTool as runExecutorTool } from './tools/executor.js';
@@ -394,8 +394,7 @@ async function runPluginCommand() {
       }
 
       case 'enable': {
-        const pluginName = args[2];
-        if (!pluginName) {
+        const pluginName = args[2]; if (!pluginName) {
           console.error('Error: Please provide a plugin name');
           process.exit(1);
         }
@@ -604,6 +603,9 @@ async function runAgentCommand() {
 }
 
 async function main() {
+  // Initialize configuration (fetch models from API)
+  await initializeConfig();
+
   // Handle plugin commands
   if (isPluginCommand) {
     await runPluginCommand();

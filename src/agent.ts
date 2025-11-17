@@ -6,7 +6,7 @@ import { ProjectContext, loadProjectContext, buildSystemMessageWithContext } fro
 import { TokenManager, TokenUsage } from './token-manager.js';
 import { PluginManager } from './plugin-manager.js';
 import { AgentManager } from './agent-manager.js';
-import { config, getDefaultModel } from './config.js';
+import { config } from './config.js';
 
 interface AgentSessionOptions {
   systemPrompt?: string;
@@ -45,7 +45,7 @@ export class AIAgent {
     this.orchestrator.setReasoningMode(this.reasoningMode);
 
     // Use default model from config
-    this.modelName = getDefaultModel();
+    this.modelName = config.getDefaultModel();
 
     // Initialize token manager with 128k context window
     this.tokenManager = new TokenManager('gpt-3.5-turbo', 128000, 0.9);
@@ -92,7 +92,7 @@ export class AIAgent {
       const statusCode = error?.status || error?.statusCode;
 
       if (errorCode === 'ECONNREFUSED' || errorCode === 'ENOTFOUND' ||
-          error?.message?.includes('ECONNREFUSED') || error?.message?.includes('ENOTFOUND')) {
+        error?.message?.includes('ECONNREFUSED') || error?.message?.includes('ENOTFOUND')) {
         warnings.push(
           '⚠️  Could not connect to API server during initialization.\n' +
           '   Using default settings (128k context window).\n\n' +

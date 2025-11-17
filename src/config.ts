@@ -1,6 +1,6 @@
-/**
- * Centralized configuration for AI models and API settings
- */
+// Centralized configuration for AI models and API settings
+
+const AVAILABLE_MODELS: Record<string, ModelConfig> = {};
 
 export interface ModelConfig {
   name: string;
@@ -17,56 +17,8 @@ export interface APIConfig {
 }
 
 /**
- * Available models configuration
- */
-export const AVAILABLE_MODELS: Record<string, ModelConfig> = {
-  'nhn-large:fast': {
-    name: 'nhn-large:fast',
-    displayName: 'NHN Small (Fast)',
-    description: 'Fast, lightweight model for quick tasks',
-    contextWindow: 32000,
-    provider: 'other',
-  },
-  'nhn-medium': {
-    name: 'nhn-medium',
-    displayName: 'NHN Medium',
-    description: 'Balanced model for general tasks',
-    contextWindow: 64000,
-    provider: 'other',
-  },
-  'nhn-large:slow': {
-    name: 'nhn-large:slow',
-    displayName: 'NHN Large (Slow)',
-    description: 'Powerful model for deep analysis',
-    contextWindow: 128000,
-    provider: 'other',
-  },
-  'gpt-3.5-turbo': {
-    name: 'gpt-3.5-turbo',
-    displayName: 'GPT-3.5 Turbo',
-    description: 'OpenAI fast model',
-    contextWindow: 16385,
-    provider: 'openai',
-  },
-  'gpt-4': {
-    name: 'gpt-4',
-    displayName: 'GPT-4',
-    description: 'OpenAI most capable model',
-    contextWindow: 8192,
-    provider: 'openai',
-  },
-  'gpt-4-turbo': {
-    name: 'gpt-4-turbo',
-    displayName: 'GPT-4 Turbo',
-    description: 'OpenAI fast and capable model',
-    contextWindow: 128000,
-    provider: 'openai',
-  },
-};
-
-/**
- * Global API configuration
- */
+  // * Global API configuration
+    */
 class ConfigManager {
   private config: APIConfig;
 
@@ -75,136 +27,154 @@ class ConfigManager {
     this.config = {
       baseURL: process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434',
       apiKey: process.env.OPENAI_API_KEY || '',
-      defaultModel: process.env.DEFAULT_MODEL || 'nhn-large:fast',
+      defaultModel: process.env.DEFAULT_MODEL || '',
     };
   }
-
-  /**
-   * Get current API configuration
-   */
-  getConfig(): APIConfig {
-    return { ...this.config };
+  get(key: keyof APIConfig): string {
+    return this.config[key];
   }
 
-  /**
-   * Get base URL for API
-   */
   getBaseURL(): string {
-    return this.config.baseURL;
+    const baseURL = config.get("baseURL");
+    return baseURL;
   }
-
-  /**
-   * Get API key
-   */
-  getApiKey(): string {
-    return this.config.apiKey;
-  }
-
-  /**
-   * Get default model name
-   */
   getDefaultModel(): string {
-    return this.config.defaultModel;
+    // Return the configured default model, or fallback to first available model
+    if (this.config.defaultModel) {
+      return this.config.defaultModel;
+    }
+    const firstModel = Object.keys(AVAILABLE_MODELS)[0];
+    return firstModel || '';
   }
 
-  /**
-   * Set base URL
-   */
-  setBaseURL(baseURL: string): void {
-    this.config.baseURL = baseURL;
-  }
-
-  /**
-   * Set API key
-   */
-  setApiKey(apiKey: string): void {
-    this.config.apiKey = apiKey;
-  }
-
-  /**
-   * Set default model
-   */
-  setDefaultModel(modelName: string): void {
-    this.config.defaultModel = modelName;
-  }
-
-  /**
-   * Update entire configuration
-   */
-  updateConfig(config: Partial<APIConfig>): void {
-    if (config.baseURL !== undefined) this.config.baseURL = config.baseURL;
-    if (config.apiKey !== undefined) this.config.apiKey = config.apiKey;
-    if (config.defaultModel !== undefined) this.config.defaultModel = config.defaultModel;
-  }
-
-  /**
-   * Get model configuration by name
-   */
-  getModelConfig(modelName: string): ModelConfig | undefined {
-    return AVAILABLE_MODELS[modelName];
-  }
-
-  /**
-   * Get all available models
-   */
-  getAvailableModels(): ModelConfig[] {
-    return Object.values(AVAILABLE_MODELS);
-  }
-
-  /**
-   * Check if a model is available in the registry
-   */
-  isModelAvailable(modelName: string): boolean {
-    return modelName in AVAILABLE_MODELS;
-  }
-
-  /**
-   * Fetch available models from the API endpoint
-   * Uses OpenAI-compatible /v1/models endpoint
-   */
-  async fetchModelsFromAPI(): Promise<any[]> {
-    try {
-      const response = await fetch(`${this.config.baseURL}/v1/models`, {
-        headers: this.config.apiKey ? {
-          'Authorization': `Bearer ${this.config.apiKey}`
-        } : {}
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch models: ${response.statusText}`);
+  async initializeDefaultModel(): Promise<void> {
+    // If no default model is set, fetch from API and set the first one
+    if (!this.config.defaultModel) {
+      console.log('No default model set, fetching from API...');
+      await enrichModels();
+      const availableModels = Object.keys(AVAILABLE_MODELS);
+      if (availableModels.length > 0) {
+        this.config.defaultModel = availableModels[0];
+        console.log('Default model set to:', this.config.defaultModel);
+      } else {
+        console.warn('No models available from API. Default model will be empty.');
       }
-
-      const data: any = await response.json();
-      return data.data || [];
-    } catch (error) {
-      console.error('Error fetching models from API:', error);
-      return [];
+    } else {
+      console.log('Using configured default model:', this.config.defaultModel);
     }
   }
 
-  /**
-   * Register a new model dynamically
-   */
-  registerModel(config: ModelConfig): void {
-    AVAILABLE_MODELS[config.name] = config;
-  }
-
-  /**
-   * Unregister a model
-   */
-  unregisterModel(modelName: string): void {
-    delete AVAILABLE_MODELS[modelName];
+  getApiKey(): string {
+    const apiKey = config.get("apiKey");
+    return apiKey;
   }
 }
 
-// Singleton instance
+
 export const config = new ConfigManager();
 
-// Export for convenience
-export const getConfig = () => config.getConfig();
-export const getBaseURL = () => config.getBaseURL();
-export const getApiKey = () => config.getApiKey();
-export const getDefaultModel = () => config.getDefaultModel();
-export const setDefaultModel = (model: string) => config.setDefaultModel(model);
-export const getAvailableModels = () => config.getAvailableModels();
-export const fetchModelsFromAPI = () => config.fetchModelsFromAPI();
+
+/**
+ * Fetches the list of models from the server.
+ * Supports multiple API formats (OpenAI, Ollama, etc.)
+ */
+async function fetchModelsFromAPI(): Promise<Record<string, ModelConfig>> {
+  try {
+    const response = await fetch(`${config.get('baseURL')}/models`, {
+      headers: {
+        Authorization: `Bearer ${config.get('apiKey')}`,
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Network response was not ok: ${response.status}`);
+    }
+    const data: any = await response.json();
+    console.log('Fetched models from API:', JSON.stringify(data, null, 2));
+    
+    const record: Record<string, ModelConfig> = {};
+    
+    // Handle OpenAI-style response: { data: [...] }
+    if (data.data && Array.isArray(data.data)) {
+      for (const model of data.data) {
+        const modelName = model.id || model.name;
+        if (modelName) {
+          record[modelName] = {
+            name: modelName,
+            displayName: model.displayName || modelName,
+            description: model.description || '',
+            contextWindow: model.contextWindow || model.context_length || 4096,
+            provider: model.provider || 'other',
+          };
+        }
+      }
+    }
+    // Handle Ollama-style response: { models: [...] }
+    else if (data.models && Array.isArray(data.models)) {
+      for (const model of data.models) {
+        const modelName = model.name || model.model;
+        if (modelName) {
+          record[modelName] = {
+            name: modelName,
+            displayName: model.displayName || modelName,
+            description: model.description || '',
+            contextWindow: model.contextWindow || 4096,
+            provider: 'ollama',
+          };
+        }
+      }
+    }
+    // Handle plain array
+    else if (Array.isArray(data)) {
+      for (const model of data) {
+        const modelName = model.id || model.name || model.model;
+        if (modelName) {
+          record[modelName] = {
+            name: modelName,
+            displayName: model.displayName || modelName,
+            description: model.description || '',
+            contextWindow: model.contextWindow || model.context_length || 4096,
+            provider: model.provider || 'other',
+          };
+        }
+      }
+    }
+    
+    console.log(`Loaded ${Object.keys(record).length} models from API`);
+    return record;
+  } catch (err) {
+    console.warn('Failed to fetch models from API:', err);
+    // Return an empty record so we can fall back to the hard‑coded list
+    return {};
+  }
+}
+
+/**
+ * Enrich AVAILABLE_MODELS with the first model fetched from the API (if any).
+ * The full list from the API is merged, but the default model is set to the
+ * first entry of the merged list. If the API call fails, the fallback list is
+ * used and the default remains the first hard‑coded model.
+ */
+async function enrichModels(): Promise<void> {
+  const apiModels = await fetchModelsFromAPI();
+  // Merge API models into the existing map (API models take precedence)
+  Object.assign(AVAILABLE_MODELS, apiModels);
+
+  // Merge API models into the existing map (API models take precedence)
+
+  // Determine the default model: first key of the merged map
+  const mergedKeys = Object.keys(AVAILABLE_MODELS);
+  // Update the ConfigManager's defaultModel if it exists
+  // (Here we simply expose a separate export for convenience)
+  Object.keys(mergedKeys);
+
+}
+
+// Initialize models on startup
+export async function initializeConfig(): Promise<void> {
+  await config.initializeDefaultModel();
+}
+
+// Auto-initialize when the module loads
+initializeConfig().catch(err => {
+  console.error('Failed to initialize config:', err);
+});

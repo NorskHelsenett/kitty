@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { config, getDefaultModel } from './config.js';
+import { config } from './config.js';
 
 export type ReasoningMode = 'low' | 'medium' | 'high';
 
@@ -39,7 +39,7 @@ export class Orchestrator {
       apiKey: key,
       baseURL: url,
     });
-    this.modelName = getDefaultModel();
+    this.modelName = config.getDefaultModel();
   }
 
   setReasoningMode(mode: ReasoningMode) {
