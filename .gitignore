@@ -3,3 +3,4 @@
 debug-*.log
 kitty-debug-*-*.log
 dist/*
+package-lock.json
