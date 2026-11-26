@@ -146,9 +146,17 @@ Inside the TUI, you can use these commands:
 ```bash
 kitty plugin list
 kitty plugin install https://example.com/my-plugin.json
-kitty agent install examples/agent-demo.yaml
-kitty agent run my-agent --input prompt.txt
+kitty agent install examples/agents/sbom-analyzer.yaml
+kitty agent run sbom-analyzer --input path/to/sbom.json
 ```
+
+Plugins run inside kitty with your user's permissions, so `kitty plugin install` shows the plugin's
+name, source and first lines of code and asks before installing (`--yes` skips the prompt). Only
+`https://` URLs are accepted.
+
+Outside the TUI (non-interactive queries and `kitty agent run`), tools that write files, run commands
+or run git ask for confirmation on the terminal. Set `KITTY_AUTO_APPROVE=1` to approve them
+automatically, for example in CI; with no terminal and no opt-in they are denied.
 
 ## Project Context
 
@@ -175,8 +183,6 @@ This is especially useful for:
 | `npm run dev -- --debug` | Run TUI with debug logging and thinking messages |
 | `npm run build` | Compile TypeScript to JavaScript |
 | `npm start` | Start the built CLI |
-| `npm test` | Run test suite |
-| `bash scripts/build-release.sh` | Create a release bundle |
 
 See `package.json` for the complete list, including version bump and additional scripts.
 

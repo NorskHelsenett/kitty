@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text, useInput } from 'ink';
+import { stripControlChars } from '../sanitize.js';
 
 export interface ErrorDialogProps {
   title: string;
@@ -34,16 +35,16 @@ export function ErrorDialog({ title, message, details, suggestion, onClose }: Er
         width={70}
       >
         <Box marginBottom={1}>
-          <Text bold color="red">❌  {title}</Text>
+          <Text bold color="red">❌  {stripControlChars(title)}</Text>
         </Box>
 
         <Box marginBottom={1}>
-          <Text>{message}</Text>
+          <Text>{stripControlChars(message)}</Text>
         </Box>
 
         {details && (
           <Box marginBottom={1} paddingX={2}>
-            <Text dimColor>{details}</Text>
+            <Text dimColor>{stripControlChars(details ?? "")}</Text>
           </Box>
         )}
 
@@ -57,7 +58,7 @@ export function ErrorDialog({ title, message, details, suggestion, onClose }: Er
           >
             <Box flexDirection="column">
               <Text bold color="yellow">💡 Suggestion:</Text>
-              <Text>{suggestion}</Text>
+              <Text>{stripControlChars(suggestion ?? "")}</Text>
             </Box>
           </Box>
         )}
@@ -80,7 +81,8 @@ export function ErrorDialog({ title, message, details, suggestion, onClose }: Er
  * Helper function to create error dialog props from an error object
  */
 export function getErrorDialogProps(error: any): ErrorDialogProps {
-  const errorMessage = error?.message || String(error);
+  // Error text can come from the API server, so strip control sequences here too
+  const errorMessage = stripControlChars(error?.message || String(error));
   const statusCode = error?.status || error?.statusCode;
   const errorCode = error?.code;
 

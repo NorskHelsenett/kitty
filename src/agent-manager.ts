@@ -70,6 +70,9 @@ export interface AgentContext {
 /**
  * Agent Executor - Executes agent workflows
  */
+// Keys that must never be written from model or workflow data
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export class AgentManager {
   private agentDir: string;
   private metadataFile: string;
@@ -93,6 +96,12 @@ export class AgentManager {
    * Register a tool for use by agents
    */
   registerTool(tool: Tool): void {
+    // First registration wins, so a later tool (e.g. from a plugin) can't
+    // silently replace a built-in such as the confirmation-gated execute_command
+    if (this.toolRegistry.has(tool.name)) {
+      console.warn(`Tool "${tool.name}" is already registered; ignoring duplicate registration.`);
+      return;
+    }
     this.toolRegistry.set(tool.name, tool);
   }
 
@@ -247,7 +256,7 @@ export class AgentManager {
 
           // Store result in variables if output is specified
           if (task.output) {
-            context.variables[task.output] = result;
+            this.setVariable(context, task.output, result);
           }
 
           // Auto-accumulate batch results for iterative processing
@@ -310,7 +319,7 @@ export class AgentManager {
           // Update variables for next iteration from evaluation object
           for (const [key, value] of Object.entries(evaluation)) {
             if (key !== 'continue' && key !== 'reason') {
-              context.variables[key] = value;
+              this.setVariable(context, key, value);
               if (key === 'next_offset') {
                 console.log(`   Updated offset: ${value}`);
                 context.variables.current_offset = value;
@@ -326,7 +335,7 @@ export class AgentManager {
           // Update final variables from evaluation
           for (const [key, value] of Object.entries(evaluation)) {
             if (key !== 'continue' && key !== 'reason') {
-              context.variables[key] = value;
+              this.setVariable(context, key, value);
               if (key === 'next_offset') {
                 context.variables.current_offset = value;
               }
@@ -505,6 +514,25 @@ export class AgentManager {
     }
   }
 
+  /**
+   * Write a variable whose name may come from model output. Plain assignment
+   * with a key like "__proto__" would invoke the prototype setter and pollute
+   * Object.prototype, so such keys are skipped and the rest are defined as own
+   * properties.
+   */
+  private setVariable(context: AgentContext, key: string, value: any): void {
+    if (UNSAFE_KEYS.has(key)) {
+      console.warn(`Ignoring unsafe variable name "${key}"`);
+      return;
+    }
+    Object.defineProperty(context.variables, key, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
   private evaluateCondition(condition: string, context: AgentContext): boolean {
     // Simple condition evaluation (could be enhanced)
     // Format: "variable_name exists" or "variable_name equals value"
@@ -515,9 +543,10 @@ export class AgentManager {
       const operator = parts[1];
 
       if (operator === 'exists') {
-        return varName in context.variables && context.variables[varName] !== undefined;
+        return Object.prototype.hasOwnProperty.call(context.variables, varName) && context.variables[varName] !== undefined;
       } else if (operator === 'equals' && parts.length >= 3) {
-        return context.variables[varName] === parts.slice(2).join(' ');
+        return Object.prototype.hasOwnProperty.call(context.variables, varName) &&
+          context.variables[varName] === parts.slice(2).join(' ');
       }
     }
 

@@ -2,6 +2,7 @@
   "name": "github-plugin",
   "version": "1.0.0",
   "description": "GitHub API integration plugin",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

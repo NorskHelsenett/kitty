@@ -21,7 +21,8 @@ export const tools = [
     },
     execute: async (params) => {
       try {
-        // Security: whitelist allowed functions and constants
+        // Functions the expression may call. They are bound as parameters of
+        // the evaluated function below, so only these names resolve.
         const allowedFunctions = {
           sqrt: Math.sqrt,
           sin: Math.sin,
@@ -33,29 +34,29 @@ export const tools = [
           ceil: Math.ceil,
           floor: Math.floor,
           round: Math.round,
-          pi: Math.PI,
-          e: Math.E,
           pow: Math.pow,
           max: Math.max,
           min: Math.min,
         };
 
-        // Create safe evaluation context
-        let expr = params.expression.toLowerCase();
-        
+        let expr = String(params.expression).toLowerCase();
+
         // Replace constants
         expr = expr.replace(/\bpi\b/g, String(Math.PI));
         expr = expr.replace(/\be\b/g, String(Math.E));
-        
-        // Basic validation
-        if (!/^[0-9+\-*/.(),\s]+$/.test(expr.replace(/sqrt|sin|cos|tan|log|ln|abs|ceil|floor|round|pow|max|min/g, ''))) {
+
+        // Only numbers, operators, parentheses, commas and the names above may remain.
+        // This check is what keeps arbitrary code out; keep it strict.
+        const names = Object.keys(allowedFunctions).join('|');
+        const stripped = expr.replace(new RegExp(`\\b(${names})\\b`, 'g'), '');
+        if (!/^[0-9+\-*/%.(),\s]+$/.test(stripped)) {
           return 'Error: Expression contains invalid characters';
         }
 
-        // For a production plugin, you'd use a proper math parser like math.js
-        // This is a simplified version for demonstration
-        const result = eval(expr);
-        
+        // For a production plugin, prefer a real math parser such as mathjs
+        const evaluate = new Function(...Object.keys(allowedFunctions), `"use strict"; return (${expr});`);
+        const result = evaluate(...Object.values(allowedFunctions));
+
         if (result === Infinity || result === -Infinity) {
           return 'Error: Result is infinity';
         }

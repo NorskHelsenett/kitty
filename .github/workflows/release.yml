@@ -9,68 +9,94 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
+      # npm trusted publishing (OIDC) needs id-token
       id-token: write
+      # git push of the version bump and gh release create
       contents: write
-      packages: write
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: main
-
-      - name: Ensure on main branch
+      # Untrusted values (the tag name) only ever reach scripts through env:,
+      # never through ${{ }} inside run: blocks.
+      - name: Validate tag
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          git checkout main
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '$TAG' is not of the form vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Build and publish exactly the tagged commit
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Ensure the tagged commit is on main
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git fetch origin "$DEFAULT_BRANCH"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"; then
+            echo "::error::Tagged commit $GITHUB_SHA is not on $DEFAULT_BRANCH; refusing to release"
+            exit 1
+          fi
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
           scope: '@norskhelsenett'
 
-      - name: Extract version from tag
-        id: version
-        run: |
-          TAG="${{ github.ref_name }}"
-          VERSION="${TAG#v}"  # Remove 'v' prefix
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-
-      - name: Update package.json version
-        run: |
-          npm version ${{ steps.version.outputs.version }} --no-git-tag-version
-
-      - name: Update Chat.tsx version
-        run: |
-          VERSION="v${{ steps.version.outputs.version }}"
-          sed -i "s/const APP_VERSION = '[^']*'/const APP_VERSION = '${VERSION}'/g" src/Chat.tsx
-
-      - name: Commit version updates
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json src/Chat.tsx
-          git commit -m "chore: update version to ${{ steps.version.outputs.version }}" || true
-          git push origin ${{ github.event.repository.default_branch }}
-
-      - name: Update Base NPM
-        run: npm install -g npm@latest
+      # Trusted publishing needs npm >= 11.5.1; pin an exact version
+      - name: Install pinned npm
+        run: npm install -g npm@11.21.2
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build
+      - name: Set version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          sed -i "s/const APP_VERSION = '[^']*'/const APP_VERSION = 'v${VERSION}'/g" src/Chat.tsx
+
+      - name: Type-check and build
         run: npm run build
 
       - name: Publish to npm
         run: npm publish
 
       - name: Create GitHub Release
-        run: |
-          gh release create ${{ steps.version.outputs.tag }} \
-            --title "Release ${{ steps.version.outputs.tag }}" \
-            --generate-notes || true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "Release $TAG" \
+            --generate-notes
+
+      # Record the released version on main only after a successful publish
+      - name: Commit version bump to main
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git checkout -f -B "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          sed -i "s/const APP_VERSION = '[^']*'/const APP_VERSION = 'v${VERSION}'/g" src/Chat.tsx
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json src/Chat.tsx
+          if git diff --cached --quiet; then
+            echo "main already at version $VERSION"
+            exit 0
+          fi
+          git commit -m "chore: update version to $VERSION"
+          git push origin "HEAD:$DEFAULT_BRANCH"

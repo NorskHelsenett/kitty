@@ -238,6 +238,16 @@ class ConfigManager {
 // Singleton instance
 export const config = new ConfigManager();
 
+/**
+ * API key to hand to the OpenAI SDK. Local OpenAI-compatible servers usually
+ * need no key, but openai >= 6.4x refuses to construct a client without one,
+ * so an empty key becomes a placeholder. Servers that ignore auth ignore it.
+ */
+export const NO_API_KEY_PLACEHOLDER = 'no-key';
+export function clientApiKey(key?: string | null): string {
+  return key && key.length > 0 ? key : NO_API_KEY_PLACEHOLDER;
+}
+
 // Export for convenience
 export const getConfig = () => config.getConfig();
 export const getBaseURL = () => config.getBaseURL();

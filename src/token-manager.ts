@@ -1,5 +1,8 @@
 import { encodingForModel, Tiktoken } from 'js-tiktoken';
 import OpenAI from 'openai';
+import { config } from './config.js';
+
+const DEFAULT_CONTEXT_WINDOW = 128000;
 
 export interface TokenUsage {
   currentTokens: number;
@@ -11,6 +14,8 @@ export interface TokenUsage {
 export interface ModelInfo {
   id: string;
   contextWindow: number;
+  /** Where contextWindow came from: the API response, the local model config, or the built-in default */
+  source: 'api' | 'config' | 'default';
 }
 
 export class TokenManager {
@@ -51,18 +56,24 @@ export class TokenManager {
       const models = await this.client.models.list();
       const model = models.data.find(m => m.id === modelId);
 
-      if (model) {
-        // Try to get context window from model object if available
-        // For OpenAI-compatible APIs, this might vary
-        const contextWindow = (model as any).context_length ||
-          (model as any).max_context_length ||
-          this.maxTokens;
-
-        return {
-          id: model.id,
-          contextWindow,
-        };
+      // Standard OpenAI /v1/models responses carry no context size, but some
+      // compatible servers (vLLM, LiteLLM, OpenRouter) add one of these fields.
+      const apiWindow = model
+        ? Number((model as any).context_length ||
+            (model as any).max_context_length ||
+            (model as any).context_window ||
+            (model as any).max_model_len) || 0
+        : 0;
+      if (apiWindow > 0) {
+        return { id: modelId, contextWindow: apiWindow, source: 'api' };
       }
+
+      const configWindow = config.getModelConfig(modelId)?.contextWindow;
+      if (configWindow && configWindow > 0) {
+        return { id: modelId, contextWindow: configWindow, source: 'config' };
+      }
+
+      return { id: modelId, contextWindow: DEFAULT_CONTEXT_WINDOW, source: 'default' };
     } catch (error) {
       // Don't log to console - let the caller handle the error
       // console.error('Failed to fetch model info:', error);
@@ -188,6 +199,7 @@ export class TokenManager {
   async summarizeConversation(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     client: OpenAI,
+    modelName: string,
     keepRecentCount: number = 10
   ): Promise<OpenAI.Chat.Completions.ChatCompletionMessageParam[]> {
     if (messages.length <= keepRecentCount) {
@@ -207,7 +219,7 @@ export class TokenManager {
 
     try {
       const summaryResponse = await client.chat.completions.create({
-        model: 'nhn-large:fast',
+        model: modelName,
         messages: [
           {
             role: 'system',
@@ -232,9 +244,10 @@ export class TokenManager {
         ...recentMessages,
       ];
     } catch (error) {
-      console.error('Failed to summarize conversation:', error);
-      // Fallback: just keep recent messages
-      return recentMessages;
+      // Keep the full history rather than silently dropping everything but the
+      // last few messages. The caller can tell nothing changed and warn the user.
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to summarize conversation with model "${modelName}": ${reason}`);
     }
   }
 

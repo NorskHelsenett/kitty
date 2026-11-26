@@ -1,9 +1,29 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { readFile, readdir, stat } from 'fs/promises';
 import { join } from 'path';
 
-const execAsync = promisify(exec);
+// All commands run via execFile with an argument array: no shell is involved,
+// so model-supplied text cannot inject commands.
+const execFileAsync = promisify(execFile);
+
+/** Keep a path argument from being parsed as an option. */
+function asPathArg(p: string): string {
+  return p.startsWith('-') ? `./${p}` : p;
+}
+
+/** Split a free-form argument string into argv, honouring simple quotes. No shell expansion. */
+function splitArgs(input: string): string[] {
+  const args: string[] = [];
+  const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(input)) !== null) {
+    if (match[1] !== undefined) args.push(match[1].replace(/\\(.)/g, '$1'));
+    else if (match[2] !== undefined) args.push(match[2]);
+    else args.push(match[3]);
+  }
+  return args;
+}
 
 export interface Tool {
   name: string;
@@ -109,8 +129,10 @@ const grepFile: Tool = {
   },
   execute: async (params: { pattern: string; path: string; recursive?: boolean }) => {
     try {
-      const flags = params.recursive ? '-r' : '';
-      const { stdout } = await execAsync(`grep ${flags} "${params.pattern}" "${params.path}"`);
+      const grepArgs = params.recursive ? ['-r'] : [];
+      // -e: pattern can't be read as an option; --: path can't either
+      grepArgs.push('-e', String(params.pattern), '--', String(params.path));
+      const { stdout } = await execFileAsync('grep', grepArgs, { maxBuffer: 10 * 1024 * 1024 });
       return stdout;
     } catch (error: any) {
       if (error.code === 1) return 'No matches found';
@@ -139,8 +161,16 @@ const gitCommand: Tool = {
   },
   execute: async (params: { command: string; args?: string }) => {
     try {
-      const args = params.args || '';
-      const { stdout } = await execAsync(`git ${params.command} ${args}`);
+      const subcommand = String(params.command || '').trim();
+      if (!/^[a-z][a-z0-9-]*$/.test(subcommand)) {
+        return `Error: invalid git subcommand ${JSON.stringify(subcommand)}`;
+      }
+      const extraArgs = params.args ? splitArgs(String(params.args)) : [];
+      const blocked = extraArgs.find(arg => /^--(upload-pack|receive-pack|exec)(=|$)/.test(arg));
+      if (blocked) {
+        return `Error: git argument ${JSON.stringify(blocked)} is not allowed`;
+      }
+      const { stdout } = await execFileAsync('git', [subcommand, ...extraArgs], { maxBuffer: 10 * 1024 * 1024 });
       return stdout;
     } catch (error: any) {
       return `Error: ${error.message}`;
@@ -169,7 +199,7 @@ const findFiles: Tool = {
   execute: async (params: { pattern: string; path?: string }) => {
     try {
       const searchPath = params.path || '.';
-      const { stdout } = await execAsync(`find ${searchPath} -name "${params.pattern}"`);
+      const { stdout } = await execFileAsync('find', [asPathArg(searchPath), '-name', String(params.pattern)], { maxBuffer: 10 * 1024 * 1024 });
       return stdout || 'No files found';
     } catch (error: any) {
       return `Error: ${error.message}`;

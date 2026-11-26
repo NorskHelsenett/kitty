@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { tools, executeTool } from './plugins.js';
+import { clientApiKey } from './config.js';
 
 export interface Message {
   role: 'user' | 'assistant';
@@ -20,7 +21,7 @@ export class AIService {
   constructor(apiKey: string = '', baseURL?: string) {
     const url = baseURL || process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434';
     this.client = new OpenAI({ 
-      apiKey: apiKey || '',
+      apiKey: clientApiKey(apiKey),
       baseURL: url,
     });
   }
