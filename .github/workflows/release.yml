@@ -48,11 +48,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
           scope: '@norskhelsenett'
 
-      # Trusted publishing needs npm >= 11.5.1; pin an exact version
+      # Trusted publishing needs npm >= 11.5.1 (and Node >= 22.14); pin an exact npm
       - name: Install pinned npm
         run: npm install -g npm@11.21.2
 
