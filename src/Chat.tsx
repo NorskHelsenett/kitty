@@ -12,6 +12,7 @@ import { SelectionMenu, SelectionItem } from './components/SelectionMenu.js';
 import { ErrorDialog, ErrorDialogProps, getErrorDialogProps } from './components/ErrorDialog.js';
 import { WarningDialog } from './components/WarningDialog.js';
 import { ConfirmationPrompt } from './components/ConfirmationPrompt.js';
+import { stripControlChars } from './sanitize.js';
 
 
 // Configure marked for terminal output - will be reconfigured per message with terminal width
@@ -175,14 +176,20 @@ ${currentPath}
 // Reducer for messages - avoids array spreading in hot path
 const messagesReducer = (state: Message[], action: MessageAction): Message[] => {
   switch (action.type) {
+    // Every message passes through here, so strip terminal control sequences
+    // (from model output, tool output or API errors) before anything renders.
+    // The header uses role 'none' and is trusted static text.
     case 'ADD':
-      return [...state, action.message];
-    case 'UPDATE_LAST':
+      return [...state, action.message.role === 'none'
+        ? action.message
+        : { ...action.message, content: stripControlChars(action.message.content || '') }];
+    case 'UPDATE_LAST': {
       if (state.length === 0 || state[state.length - 1].role !== 'assistant') {
         return state;
       }
       const updated = state.slice(0, -1);
-      return [...updated, { ...state[state.length - 1], content: action.content }];
+      return [...updated, { ...state[state.length - 1], content: stripControlChars(action.content || '') }];
+    }
     case 'CLEAR':
       return [];
     default:
@@ -429,7 +436,9 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   const [errorDialog, setErrorDialog] = useState<ErrorDialogProps | null>(null);
   const [warningMessage, setWarningMessage] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<any>(null);
-  const [allowedCommands, setAllowedCommands] = useState(new Set<string>());
+  // A ref, not state: the confirmation callback is registered once and must
+  // see entries added later via "allow for this session".
+  const allowedCommandsRef = useRef(new Set<string>());
   const { exit } = useApp();
 
   // Keyboard control state
@@ -479,7 +488,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
         // Set up tool confirmation callback
         setConfirmationCallback(async (toolName: string, input: any, details?: string) => {
           const commandKey = `${toolName}:${JSON.stringify(input)}`;
-          if (allowedCommands.has(commandKey)) {
+          if (allowedCommandsRef.current.has(commandKey)) {
             return true;
           }
 
@@ -497,7 +506,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
               },
               onAllowAndRemember: () => {
                 setConfirmation(null);
-                setAllowedCommands(prev => new Set(prev).add(commandKey));
+                allowedCommandsRef.current.add(commandKey);
                 resolve(true);
               },
               onExplain: () => {
@@ -582,7 +591,10 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
   useInput((input, key) => {
     // Don't interfere with text input
     if (key.escape) {
-      if (isProcessing && abortControllerRef.current) {
+      // An open dialog owns Esc (e.g. denying a tool confirmation); Ink delivers
+      // the key to every useInput handler, so don't also treat it as a cancel.
+      const dialogOpen = Boolean(confirmation || errorDialog || warningMessage || showPluginMenu || showModelMenu);
+      if (!dialogOpen && isProcessing && abortControllerRef.current) {
         // Cancel ongoing request
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
@@ -680,7 +692,7 @@ export function Chat({ agent, debugMode = false }: ChatProps) {
 
   const addTask = useCallback((description: string): string => {
     const id = `task-${Date.now()}-${Math.random()}`;
-    setTasks(prev => [...prev, { id, description, completed: false }]);
+    setTasks(prev => [...prev, { id, description: stripControlChars(description), completed: false }]);
     return id;
   }, []);
 

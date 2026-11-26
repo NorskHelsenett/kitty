@@ -62,7 +62,8 @@ Comprehensive SBOM (Software Bill of Materials) analysis agent that:
 
 **Usage:**
 ```bash
-bun run examples/agent-demo.ts
+kitty agent install examples/agents/sbom-analyzer.yaml
+kitty agent run sbom-analyzer --input '{"sbom_file": "path/to/sbom.json"}'
 ```
 
 ### `dependency-checker.yaml`
@@ -82,19 +83,6 @@ kitty agent run dependency-checker --input '{"package_name": "react"}'
 - **`sample-sbom.json`** - Example CycloneDX SBOM file for testing
 
 ## Usage Examples
-
-### Running the Agent Demo
-
-```bash
-cd /workspaces/kitty
-bun run examples/agent-demo.ts
-```
-
-This demonstrates:
-- Installing agents programmatically
-- Registering tools for agents to use
-- Executing multi-step workflows
-- Handling agent results and errors
 
 ### Testing SBOM Analysis
 
@@ -262,10 +250,7 @@ examples/
 ├── agents/                        # Agent workflows
 │   ├── sbom-analyzer.yaml         # SBOM analysis workflow
 │   └── dependency-checker.yaml    # Simple dependency checker
-├── sample-sbom.json               # Test SBOM file
-├── agent-demo.ts                  # Agent system demonstration
-├── repl.ts                        # REPL example
-└── simple-cli.ts                  # CLI example
+└── sample-sbom.json               # Test SBOM file
 ```
 
 ## Next Steps

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text, useInput } from 'ink';
+import { stripControlChars } from '../sanitize.js';
 
 export interface WarningDialogProps {
   title: string;
@@ -32,11 +33,11 @@ export function WarningDialog({ title, message, onClose }: WarningDialogProps) {
         width={70}
       >
         <Box marginBottom={1}>
-          <Text bold color="yellow">⚠️  {title}</Text>
+          <Text bold color="yellow">⚠️  {stripControlChars(title)}</Text>
         </Box>
 
         <Box marginBottom={1}>
-          <Text>{message}</Text>
+          <Text>{stripControlChars(message)}</Text>
         </Box>
 
         <Box marginTop={1} justifyContent="center">

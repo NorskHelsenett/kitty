@@ -5,13 +5,17 @@ import { AIAgent } from './agent.js';
 import { PluginManager } from './plugin-manager.js';
 import { AgentManager, type AgentWorkflow, type AgentModelConfig } from './agent-manager.js';
 import type { Tool } from './plugins.js';
-import { config } from './config.js';
+import { config, clientApiKey } from './config.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { executeTool as runExecutorTool } from './tools/executor.js';
 import { builtInTools } from './tools/index.js';
 import { tools as sbomTools } from './tools/sbom-tools.js';
 import type { ThinkingStep } from './orchestrator.js';
+import { stripControlChars } from './sanitize.js';
+import { AUTO_APPROVE_ENV } from './cli-confirm.js';
+import type { PluginInstallSummary } from './plugin-manager.js';
+import * as readline from 'readline/promises';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -44,7 +48,8 @@ Options:
   --help     Show this help message
 
 Plugin Commands:
-  kitty plugin install <url|file>    # Install plugin from URL or file
+  kitty plugin install <https-url|file> [--yes] [--force]
+                                     # Install plugin (asks first; --yes skips the prompt)
   kitty plugin list                  # List installed plugins
   kitty plugin enable <name>         # Enable a plugin
   kitty plugin disable <name>        # Disable a plugin
@@ -57,6 +62,11 @@ Agent Commands:
   kitty agent enable <name>          # Enable an agent
   kitty agent disable <name>         # Disable an agent
   kitty agent remove <name>          # Remove an agent
+
+Environment:
+  KITTY_AUTO_APPROVE=1               # Outside the TUI, approve write_file, execute_command
+                                     # and git_operation without asking (for CI). Without it
+                                     # kitty asks on the terminal, or denies if there is none.
 
 Examples:
   kitty                              # Interactive TUI mode
@@ -276,7 +286,8 @@ Guidelines:
   let streamedResponse = '';
   const handleTextChunk = (text: string) => {
     streamedResponse += text;
-    process.stdout.write(text);
+    // Model output goes straight to the terminal: drop control sequences
+    process.stdout.write(stripControlChars(text));
   };
 
   const handleThinking = (step: ThinkingStep) => {
@@ -329,7 +340,7 @@ Guidelines:
     } else {
       console.error('Error: Request failed');
     }
-    console.error(`  → ${displayMessage}`);
+    console.error(`  → ${stripControlChars(String(displayMessage))}`);
 
     if (isDebugMode) {
       logDebugMessage('HTTP Error', displayMessage, {
@@ -341,6 +352,46 @@ Guidelines:
     }
 
     process.exit(1);
+  }
+}
+
+/**
+ * Show what a plugin install will run and ask before installing.
+ * Plugins run with the full privileges of the kitty process.
+ */
+async function confirmPluginInstall(summary: PluginInstallSummary): Promise<boolean> {
+  const m = summary.manifest;
+  const lines = [
+    '',
+    'Plugin code runs inside kitty with your user\'s full permissions.',
+    'Only install plugins from sources you trust.',
+    '',
+    `  Name:    ${m.name}`,
+    `  Version: ${m.version ?? '(none)'}`,
+    `  Source:  ${summary.source}`,
+    `  Entry:   ${m.main}`,
+    `  Code:    ${summary.codeBytes} bytes`,
+    '',
+    '  First lines of the code:',
+    ...summary.codePreview.split('\n').map(line => `  | ${line}`),
+    '',
+  ];
+  console.log(stripControlChars(lines.join('\n')));
+
+  if (args.includes('--yes') || args.includes('-y')) {
+    console.log('--yes given, installing without asking.');
+    return true;
+  }
+  if (!process.stdin.isTTY) {
+    console.error('Refusing to install without confirmation. Re-run with --yes to approve.');
+    return false;
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question('Install this plugin? [y/N] ');
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
   }
 }
 
@@ -363,10 +414,15 @@ async function runPluginCommand() {
 
         console.log(`Installing plugin from: ${source}`);
 
-        if (source.startsWith('http://') || source.startsWith('https://')) {
-          await pluginManager.installFromURL(source, isForce);
+        if (source.startsWith('http://')) {
+          console.error('Error: plain http:// plugin URLs are not allowed; use https://');
+          process.exit(1);
+        }
+
+        if (source.startsWith('https://')) {
+          await pluginManager.installFromURL(source, isForce, confirmPluginInstall);
         } else {
-          await pluginManager.installFromFile(source, isForce);
+          await pluginManager.installFromFile(source, isForce, confirmPluginInstall);
         }
 
         console.log('Plugin installed successfully!');
@@ -382,10 +438,10 @@ async function runPluginCommand() {
           console.log('\nInstalled Plugins:\n');
           for (const plugin of plugins) {
             const status = plugin.enabled ? '✓ enabled' : '✗ disabled';
-            console.log(`  ${plugin.name} (${plugin.version}) - ${status}`);
-            console.log(`    ${plugin.description}`);
-            if (plugin.author) console.log(`    Author: ${plugin.author}`);
-            console.log(`    Source: ${plugin.source}`);
+            console.log(stripControlChars(`  ${plugin.name} (${plugin.version}) - ${status}`));
+            console.log(stripControlChars(`    ${plugin.description}`));
+            if (plugin.author) console.log(stripControlChars(`    Author: ${plugin.author}`));
+            console.log(stripControlChars(`    Source: ${plugin.source}`));
             console.log(`    Installed: ${new Date(plugin.installDate).toLocaleDateString()}`);
             console.log();
           }
@@ -506,6 +562,9 @@ async function runAgentCommand() {
         }
 
         console.log(`Running agent: ${agentName}`);
+        if (!process.env[AUTO_APPROVE_ENV]) {
+          console.log(`Tools that change files or run commands will ask for confirmation. Set ${AUTO_APPROVE_ENV}=1 to approve them automatically.`);
+        }
 
         const modelConfig: Partial<AgentModelConfig> = workflow.model || {};
         const modelName = modelConfig.name || config.getDefaultModel();
@@ -515,7 +574,7 @@ async function runAgentCommand() {
         const temperature = modelConfig.temperature ?? 0.7;
 
         const aiClient = new OpenAI({
-          apiKey: modelApiKey,
+          apiKey: clientApiKey(modelApiKey),
           baseURL: modelBaseURL,
         });
 
@@ -541,7 +600,7 @@ async function runAgentCommand() {
             });
 
             const result = response.choices[0]?.message?.content || '';
-            console.log(`\n📝 AI Response:\n${result}\n`);
+            console.log(`\n📝 AI Response:\n${stripControlChars(result)}\n`);
             return result;
           } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
@@ -568,7 +627,7 @@ async function runAgentCommand() {
           console.log('\n' + '='.repeat(80));
           console.log('📄 FINAL REPORT');
           console.log('='.repeat(80) + '\n');
-          console.log(context.variables.report);
+          console.log(stripControlChars(String(context.variables.report)));
           console.log('\n' + '='.repeat(80) + '\n');
         }
 
@@ -577,7 +636,7 @@ async function runAgentCommand() {
           console.log('\n' + '='.repeat(80));
           console.log('📄 FINAL REPORT');
           console.log('='.repeat(80) + '\n');
-          console.log(context.variables.final_report);
+          console.log(stripControlChars(String(context.variables.final_report)));
           console.log('\n' + '='.repeat(80) + '\n');
         }
         break;

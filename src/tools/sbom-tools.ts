@@ -5,7 +5,7 @@
  * extracting package URLs (PURLs), and checking package information.
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { readFile } from 'fs/promises';
 import * as fs from 'fs/promises';
@@ -13,7 +13,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { Tool } from '../plugins.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // Cache directory for GitHub API responses
 const SBOM_CACHE_ROOT = path.join(os.homedir(), '.kitty', 'cache', 'github', 'sbom');
@@ -47,8 +47,23 @@ async function initCache(): Promise<void> {
   }
 }
 
+// GitHub owner and repository names only use these characters
+const GITHUB_NAME = /^[A-Za-z0-9._-]+$/;
+
+function isValidGitHubName(name: string): boolean {
+  return GITHUB_NAME.test(name) && name !== '.' && name !== '..';
+}
+
 function getCacheFilePath(owner: string, repo: string): string {
-  return path.join(DAILY_CACHE_DIR, `${owner}__${repo}.json`);
+  // owner/repo come from untrusted SBOM content; never let them form a path
+  if (!isValidGitHubName(owner) || !isValidGitHubName(repo)) {
+    throw new Error(`Invalid GitHub owner/repo: ${owner}/${repo}`);
+  }
+  const cachePath = path.join(DAILY_CACHE_DIR, `${owner}__${repo}.json`);
+  if (path.dirname(cachePath) !== DAILY_CACHE_DIR) {
+    throw new Error(`Cache path escapes cache directory: ${owner}/${repo}`);
+  }
+  return cachePath;
 }
 
 function normalizeCachedPackageRecord(record: any): any {
@@ -379,23 +394,32 @@ const fetchPackageMetadata: Tool = {
   execute: async (params: { ecosystem: string; package_name: string }) => {
     try {
       let url = '';
-      
+      const name = String(params.package_name || '').trim();
+      // Package names are untrusted: reject path tricks and encode every segment
+      if (!name || name.split('/').some(seg => seg === '' || seg === '.' || seg === '..')) {
+        return `Error: Invalid package name ${JSON.stringify(name)}`;
+      }
+
       switch (params.ecosystem) {
         case 'npm':
-          url = `https://registry.npmjs.org/${params.package_name}`;
+          // Scoped names (@scope/pkg) are fetched as @scope%2Fpkg
+          url = `https://registry.npmjs.org/${encodeURIComponent(name).replace(/^%40/, '@')}`;
           break;
         case 'pypi':
-          url = `https://pypi.org/pypi/${params.package_name}/json`;
+          url = `https://pypi.org/pypi/${encodeURIComponent(name)}/json`;
           break;
         case 'cargo':
-          url = `https://crates.io/api/v1/crates/${params.package_name}`;
+          url = `https://crates.io/api/v1/crates/${encodeURIComponent(name)}`;
           break;
-        case 'maven':
+        case 'maven': {
           // Maven Central search API
-          url = `https://search.maven.org/solrsearch/select?q=g:"${params.package_name.split(':')[0]}"`;
+          const group = name.split(':')[0].replace(/["\\]/g, '');
+          url = `https://search.maven.org/solrsearch/select?${new URLSearchParams({ q: `g:"${group}"` })}`;
           break;
+        }
         case 'go':
-          url = `https://proxy.golang.org/${params.package_name}/@latest`;
+          // Module paths keep their slashes; each segment is encoded
+          url = `https://proxy.golang.org/${name.split('/').map(encodeURIComponent).join('/')}/@latest`;
           break;
         default:
           return `Error: Unsupported ecosystem ${params.ecosystem}`;
@@ -461,8 +485,25 @@ const checkRepoMaintenance: Tool = {
     try {
       const threshold = params.months_threshold || 12;
       
-      // Get last commit date using git ls-remote
-      const { stdout } = await execAsync(`git ls-remote ${params.repo_url} HEAD`);
+      const repoUrl = String(params.repo_url || '').trim();
+      // Only plain network remotes; a value starting with "-" would be read as a
+      // git option (e.g. --upload-pack=<cmd>), and transports such as ext:: run commands
+      const isNetworkUrl = /^(https?|ssh|git):\/\/[^\s]+$/i.test(repoUrl) ||
+        /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\s]+$/.test(repoUrl);
+      if (!isNetworkUrl || repoUrl.startsWith('-')) {
+        return JSON.stringify({
+          status: 'error',
+          repo_url: repoUrl,
+          message: 'repo_url must be an http(s), ssh or git URL',
+          maintained: false,
+        }, null, 2);
+      }
+
+      // Get last commit date using git ls-remote (argument array, no shell)
+      const { stdout } = await execFileAsync('git', ['ls-remote', repoUrl, 'HEAD'], {
+        timeout: 30000,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      });
       
       if (!stdout) {
         return JSON.stringify({
@@ -494,58 +535,8 @@ const checkRepoMaintenance: Tool = {
   },
 };
 
-/**
- * Execute shell command (for git operations, etc.)
- */
-const executeCommand: Tool = {
-  name: 'execute_command',
-  description: 'Execute a shell command (useful for git clone, git log, etc.)',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      command: {
-        type: 'string',
-        description: 'Shell command to execute',
-      },
-      cwd: {
-        type: 'string',
-        description: 'Working directory (optional)',
-      },
-      timeout: {
-        type: 'number',
-        description: 'Timeout in milliseconds (default: 30000)',
-      },
-    },
-    required: ['command'],
-  },
-  execute: async (params: { command: string; cwd?: string; timeout?: number }) => {
-    try {
-      const options: any = {
-        timeout: params.timeout || 30000,
-        maxBuffer: 1024 * 1024 * 10, // 10MB
-      };
-
-      if (params.cwd) {
-        options.cwd = params.cwd;
-      }
-
-      const { stdout, stderr } = await execAsync(params.command, options);
-
-      return JSON.stringify({
-        success: true,
-        stdout: String(stdout).trim(),
-        stderr: String(stderr).trim(),
-      }, null, 2);
-    } catch (error: any) {
-      return JSON.stringify({
-        success: false,
-        error: error.message,
-        stdout: error.stdout ? String(error.stdout).trim() : '',
-        stderr: error.stderr ? String(error.stderr).trim() : '',
-      }, null, 2);
-    }
-  },
-};
+// Shell commands are handled by the built-in execute_command tool
+// (src/tools/executor.ts), which goes through user confirmation.
 
 /**
  * Batch analyze GitHub packages from SBOM
@@ -591,14 +582,14 @@ const batchAnalyzeGitHubPackages: Tool = {
       }
 
       // Extract GitHub PURLs from SBOM
-      const { stdout } = await execAsync(`grep -o 'pkg:golang/github.com/[^"]*' "${params.file_path}"`);
-      const purls = stdout.trim().split('\n').filter(Boolean);
+      // Read the SBOM directly instead of shelling out to grep
+      const sbomContent = await readFile(String(params.file_path), 'utf-8');
+      const purls = sbomContent.match(/pkg:golang\/github\.com\/[^"\n]*/g) || [];
 
       // Also get overall PURL statistics for context
       let purlStats: Record<string, number> = {};
       try {
-        const { stdout: allPurls } = await execAsync(`grep -o 'pkg:[^"]*' "${params.file_path}"`);
-        const allPurlsList = allPurls.trim().split('\n').filter(Boolean);
+        const allPurlsList = sbomContent.match(/pkg:[^"\n]*/g) || [];
 
         allPurlsList.forEach(purl => {
           const typeMatch = purl.match(/^pkg:([^\/]+)\//);
@@ -655,9 +646,15 @@ const batchAnalyzeGitHubPackages: Tool = {
 
           let [, owner, rawRepo, version] = match;
 
-          // Strip Go module version suffixes (e.g., /v2, /v3, /v4)
-          // These are semantic versioning paths, not part of the actual repo name
-          const repo = rawRepo.replace(/\/v\d+$/, '');
+          // The repository is the first path segment after the owner; anything
+          // after it is a Go sub-package or a /vN major-version suffix
+          const repo = rawRepo.split('/')[0];
+
+          // owner/repo are untrusted SBOM content and end up in API URLs and cache paths
+          if (!isValidGitHubName(owner) || !isValidGitHubName(repo)) {
+            errors.push(`Skipping PURL with invalid GitHub owner/repo: ${purl}`);
+            continue;
+          }
 
           console.log(`   Parsing: ${owner}/${rawRepo} → ${owner}/${repo}`);
 
@@ -679,7 +676,8 @@ const batchAnalyzeGitHubPackages: Tool = {
 
           cacheMisses++;
 
-          // Fetch from GitHub API
+          // Fetch from GitHub API (owner/repo are validated above; encode anyway)
+          const repoApiPath = `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
           try {
             const [
               repoResponse,
@@ -688,11 +686,11 @@ const batchAnalyzeGitHubPackages: Tool = {
               issuesResponse,
               releasesResponse
             ] = await Promise.all([
-              fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers }),
-              fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1`, { headers }),
-              fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=10`, { headers }),
-              fetch(`https://api.github.com/repos/${owner}/${repo}/issues?state=all&sort=updated&direction=desc&per_page=100`, { headers }),
-              fetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=10`, { headers })
+              fetch(`https://api.github.com/repos/${repoApiPath}`, { headers }),
+              fetch(`https://api.github.com/repos/${repoApiPath}/commits?per_page=1`, { headers }),
+              fetch(`https://api.github.com/repos/${repoApiPath}/pulls?state=all&sort=updated&direction=desc&per_page=10`, { headers }),
+              fetch(`https://api.github.com/repos/${repoApiPath}/issues?state=all&sort=updated&direction=desc&per_page=100`, { headers }),
+              fetch(`https://api.github.com/repos/${repoApiPath}/releases?per_page=10`, { headers })
             ]);
 
             // Check for rate limiting
@@ -932,6 +930,5 @@ export const tools: Tool[] = [
   scanSBOMPURLs,
   fetchPackageMetadata,
   checkRepoMaintenance,
-  executeCommand,
   batchAnalyzeGitHubPackages,
 ];

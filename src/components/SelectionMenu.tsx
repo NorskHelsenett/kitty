@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { stripControlChars } from '../sanitize.js';
 
 export interface SelectionItem {
   id: string;
@@ -116,9 +117,9 @@ export function SelectionMenu({ title, items, onSubmit, onCancel, singleSelect =
             <Text color={isSelected ? 'cyan' : 'white'}>
               {isSelected ? '> ' : '  '}
               {singleSelect ? (isEnabled ? '(•) ' : '( ) ') : (isEnabled ? '[✓] ' : '[ ] ')}
-              <Text bold={isSelected}>{item.name}</Text>
+              <Text bold={isSelected}>{stripControlChars(item.name)}</Text>
               {' - '}
-              <Text dimColor>{item.description}</Text>
+              <Text dimColor>{stripControlChars(item.description)}</Text>
             </Text>
           </Box>
         );

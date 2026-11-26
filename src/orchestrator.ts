@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { config, getDefaultModel } from './config.js';
+import { config, getDefaultModel, clientApiKey } from './config.js';
 
 export type ReasoningMode = 'low' | 'medium' | 'high';
 
@@ -36,7 +36,7 @@ export class Orchestrator {
     const key = apiKey || config.getApiKey();
 
     this.client = new OpenAI({
-      apiKey: key,
+      apiKey: clientApiKey(key),
       baseURL: url,
     });
     this.modelName = getDefaultModel();

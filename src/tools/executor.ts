@@ -1,11 +1,43 @@
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { isPathIgnored, filterIgnoredPaths } from './gitignore-utils.js';
 import { Tool } from '../plugins.js';
+import { confirmOnTerminal } from '../cli-confirm.js';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/**
+ * Run a program with an argument array (no shell). Non-zero exit codes listed
+ * in okExitCodes (e.g. grep's 1 for "no match") return their output instead of
+ * throwing.
+ */
+async function runFile(
+  file: string,
+  args: string[],
+  options: { cwd?: string; okExitCodes?: number[] } = {}
+): Promise<{ stdout: string; stderr: string }> {
+  try {
+    const { stdout, stderr } = await execFileAsync(file, args, {
+      cwd: options.cwd,
+      maxBuffer: 10 * 1024 * 1024,
+      encoding: 'utf8',
+    });
+    return { stdout, stderr };
+  } catch (error: any) {
+    if (typeof error?.code === 'number' && options.okExitCodes?.includes(error.code)) {
+      return { stdout: error.stdout || '', stderr: error.stderr || '' };
+    }
+    throw error;
+  }
+}
+
+/** Keep a path argument from being parsed as an option by find/ls. */
+function asPathArg(p: string): string {
+  return p.startsWith('-') ? `./${p}` : p;
+}
 
 // Registry for custom plugin tools
 const customTools = new Map<string, Tool>();
@@ -34,8 +66,10 @@ export function getCustomTools(): Tool[] {
 const toolsRequiringConfirmation = new Set(['write_file', 'execute_command', 'git_operation']);
 
 export async function executeTool(toolName: string, input: any): Promise<string> {
-  // Check if tool requires confirmation
-  if (toolsRequiringConfirmation.has(toolName) && confirmationCallback) {
+  // Check if tool requires confirmation. The gate always applies: when no UI
+  // callback is registered (non-interactive mode, `kitty agent run`) we fall
+  // back to asking on the terminal, or deny unless KITTY_AUTO_APPROVE is set.
+  if (toolsRequiringConfirmation.has(toolName)) {
     let details = '';
 
     if (toolName === 'write_file') {
@@ -50,16 +84,26 @@ export async function executeTool(toolName: string, input: any): Promise<string>
     } else if (toolName === 'git_operation') {
       const repoPath = input.repository_path || 'current directory';
       const operation = input.operation || input.command || 'unknown';
-      const args = input.args || [];
-      details = `Operation: git ${operation}\nArgs: ${args.join(' ')}\nRepository: ${repoPath}`;
+      const args: unknown[] = Array.isArray(input.args) ? input.args : [];
+      // Show each argument JSON-quoted so separators or trailing content can't hide
+      details = `Operation: git ${JSON.stringify(operation)}\nArgs: ${args.length > 0 ? args.map(a => JSON.stringify(a)).join(' ') : '(none)'}\nRepository: ${repoPath}`;
     }
 
-    const confirmed = await confirmationCallback(toolName, input, details);
+    let confirmed: boolean;
+    let reason = 'Action cancelled by user';
+    if (confirmationCallback) {
+      confirmed = await confirmationCallback(toolName, input, details);
+    } else {
+      const result = await confirmOnTerminal(toolName, details);
+      confirmed = result.approved;
+      if (result.reason) reason = result.reason;
+    }
     if (!confirmed) {
       return JSON.stringify({
         tool: toolName,
-        markdown: '**Action cancelled by user**',
-        cancelled: true
+        markdown: `**${reason}**`,
+        cancelled: true,
+        error: reason,
       }, null, 2);
     }
   }
@@ -123,7 +167,9 @@ export async function executeTool(toolName: string, input: any): Promise<string>
 async function executeCommand(input: { command: string; working_directory?: string }): Promise<string> {
   const { command, working_directory } = input;
   
-  // Security: Prevent dangerous commands
+  // This runs an arbitrary shell command. The real control is the user
+  // confirmation in executeTool; the patterns below only catch a few obvious
+  // accidents and are not a security boundary.
   const dangerousPatterns = [
     /rm\s+-rf\s+\/(?!home|tmp)/,
     /dd\s+if=/,
@@ -203,16 +249,14 @@ async function listDirectory(input: { path?: string; show_hidden?: boolean; recu
   const { path: dirPath, show_hidden = false, recursive = false } = input;
   
   try {
-    // Get current working directory
-    const { stdout: pwdOutput } = await execAsync('pwd');
-    const cwd = pwdOutput.trim();
+    const cwd = process.cwd();
     
     // Resolve the target directory (default to current directory)
     const targetDir = dirPath || cwd;
     const resolvedPath = path.isAbsolute(targetDir) ? targetDir : path.resolve(cwd, targetDir);
     
     // Security check: Prevent listing directories above the current working directory
-    if (!resolvedPath.startsWith(cwd)) {
+    if (resolvedPath !== cwd && !resolvedPath.startsWith(cwd + path.sep)) {
       return `Error: Cannot list directories above the current working directory (${cwd})`;
     }
     
@@ -266,8 +310,7 @@ async function listDirectory(input: { path?: string; show_hidden?: boolean; recu
       const flags = ['-l'];
       if (show_hidden) flags.push('-a');
       
-      const command = `ls ${flags.join(' ')} "${resolvedPath}"`;
-      const { stdout } = await execAsync(command);
+      const { stdout } = await runFile('ls', [...flags, '--', resolvedPath]);
       
       // Filter out ignored paths
       const lines = stdout.split('\n');
@@ -362,40 +405,43 @@ async function searchFiles(input: {
   const { pattern, path: searchPath = '.', search_type, file_pattern, use_regex = false } = input;
   
   try {
-    let command: string;
-    
+    // Arguments go to grep/find as an array, never through a shell, so
+    // pattern and path text cannot run commands.
+    let stdout: string;
+
     if (search_type === 'content') {
-      // Use grep to search file contents
-      command = `grep -r "${pattern}" "${searchPath}"`;
+      const grepArgs = ['-r'];
       if (file_pattern) {
-        command += ` --include="${file_pattern}"`;
+        grepArgs.push(`--include=${file_pattern}`);
       }
-      command += ' 2>/dev/null || true';
+      // -e keeps a pattern that starts with "-" from being read as an option
+      grepArgs.push('-e', pattern, '--', searchPath);
+      // grep exits 1 for "no matches" and 2 for unreadable files; keep the output either way
+      ({ stdout } = await runFile('grep', grepArgs, { okExitCodes: [1, 2] }));
     } else {
       // Use find to search filenames
       // Detect if pattern looks like a regex (contains regex special chars)
       const looksLikeRegex = use_regex || /[|()[\]{}^$+?\\]/.test(pattern);
-      
+      const findArgs = [asPathArg(searchPath), '-type', 'f'];
+
       if (looksLikeRegex) {
-        // Use -regex for regex patterns
         // find -regex uses full path matching, so we need to adjust the pattern
         let regexPattern = pattern;
-        
+
         // If pattern doesn't start with path separator or .*, prepend .*
         if (!regexPattern.startsWith('.*') && !regexPattern.startsWith('/')) {
           regexPattern = '.*' + regexPattern;
         }
-        
+
         // Use posix-extended for better regex support (alternation, etc.)
-        // Add -type f to only find files (not directories)
-        command = `find "${searchPath}" -type f -regextype posix-extended -regex "${regexPattern}" 2>/dev/null || true`;
+        findArgs.push('-regextype', 'posix-extended', '-regex', regexPattern);
       } else {
         // Use -name for glob patterns
-        command = `find "${searchPath}" -type f -name "${pattern}" 2>/dev/null || true`;
+        findArgs.push('-name', pattern);
       }
+      // find exits 1 when some directories can't be read; keep partial results
+      ({ stdout } = await runFile('find', findArgs, { okExitCodes: [1] }));
     }
-    
-    const { stdout } = await execAsync(command);
     
     if (!stdout || !stdout.trim()) {
       return 'No matches found';
@@ -433,46 +479,52 @@ async function searchFiles(input: {
   }
 }
 
+// Must match the operation enum in tools/index.ts
+const ALLOWED_GIT_OPERATIONS = new Set(['status', 'log', 'diff', 'branch', 'add', 'commit', 'push', 'pull', 'clone', 'custom']);
+const GIT_SUBCOMMAND = /^[a-z][a-z0-9-]*$/;
+// Options that make git run an arbitrary program
+const BLOCKED_GIT_ARG = /^--(upload-pack|receive-pack|exec)(=|$)/;
+
 async function gitOperation(input: { 
   operation: string; 
   args?: string[];
   repository_path?: string;
   command?: string;  // Added for backward compatibility
 }): Promise<string> {
-  const { operation, args = [], repository_path = '.', command: legacyCommand } = input;
+  const { operation, repository_path = '.', command: legacyCommand } = input;
+  const args: string[] = Array.isArray(input.args) ? input.args : [];
   
   try {
-    let gitCommand: string[];
-    
+    let gitArgs: string[];
+
     // Handle legacy 'command' field for backward compatibility
     if (legacyCommand) {
-      // If command is provided, parse it
-      const parts = legacyCommand.trim().split(/\s+/);
+      // Split on whitespace into argv; nothing is passed through a shell
+      const parts = String(legacyCommand).trim().split(/\s+/);
       const gitOp = parts[0];
-      const gitArgs = parts.slice(1);
-      gitCommand = ['git', gitOp, ...gitArgs];
+      if (!GIT_SUBCOMMAND.test(gitOp)) {
+        return `Error: invalid git subcommand ${JSON.stringify(gitOp)}`;
+      }
+      gitArgs = [gitOp, ...parts.slice(1)];
     } else if (!operation || operation === 'undefined') {
       return `Error: git operation is required. Received: ${JSON.stringify(input)}`;
+    } else if (!ALLOWED_GIT_OPERATIONS.has(operation)) {
+      return `Error: unsupported git operation ${JSON.stringify(operation)}. Allowed: ${[...ALLOWED_GIT_OPERATIONS].join(', ')}`;
     } else if (operation === 'custom' && args.length > 0) {
-      gitCommand = ['git', ...args];
+      gitArgs = [...args];
     } else {
-      gitCommand = ['git', operation, ...args];
+      gitArgs = [operation, ...args];
     }
-    
-    // Use shell: true to properly handle quoting
-    const command = gitCommand.map(arg => {
-      // Quote arguments that contain spaces or special shell characters
-      if (arg.includes(' ') || arg.includes('%') || arg.includes('$') || arg.includes('*')) {
-        return `'${arg.replace(/'/g, "'\\''")}'`; // Escape single quotes
-      }
-      return arg;
-    }).join(' ');
-    
-    const { stdout, stderr } = await execAsync(command, { 
-      cwd: repository_path,
-      shell: '/bin/bash'
-    });
-    
+
+    gitArgs = gitArgs.map(arg => String(arg));
+    const blocked = gitArgs.find(arg => BLOCKED_GIT_ARG.test(arg));
+    if (blocked) {
+      return `Error: git argument ${JSON.stringify(blocked)} is not allowed (it can run arbitrary programs)`;
+    }
+
+    // execFile: arguments reach git as-is, no shell parsing
+    const { stdout, stderr } = await runFile('git', gitArgs, { cwd: repository_path });
+
     let result = '';
     if (stdout) result += stdout;
     if (stderr) result += `\n${stderr}`;

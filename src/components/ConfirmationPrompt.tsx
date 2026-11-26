@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { stripControlChars } from '../sanitize.js';
 
 export interface ConfirmationPromptProps {
 
@@ -56,16 +57,16 @@ export function ConfirmationPrompt({ title, message, details, onAllow, onAllowAn
   return (
     <Box flexDirection="column" padding={1} borderStyle="round" borderColor="yellow">
       <Box marginBottom={1}>
-        <Text bold color="yellow">⚠️  {title}</Text>
+        <Text bold color="yellow">⚠️  {stripControlChars(title)}</Text>
       </Box>
       
       <Box marginBottom={1}>
-        <Text>{message}</Text>
+        <Text>{stripControlChars(message)}</Text>
       </Box>
       
       {details && (
         <Box marginBottom={1} paddingX={2}>
-          <Text dimColor>{details}</Text>
+          <Text dimColor>{stripControlChars(details ?? "")}</Text>
         </Box>
       )}
       

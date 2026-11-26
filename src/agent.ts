@@ -6,7 +6,7 @@ import { ProjectContext, loadProjectContext, buildSystemMessageWithContext } fro
 import { TokenManager, TokenUsage } from './token-manager.js';
 import { PluginManager, type PluginMetadata } from './plugin-manager.js';
 import { AgentManager } from './agent-manager.js';
-import { config, getDefaultModel, setDefaultModel } from './config.js';
+import { config, getDefaultModel, setDefaultModel, clientApiKey } from './config.js';
 
 interface AgentSessionOptions {
   systemPrompt?: string;
@@ -38,7 +38,7 @@ export class AIAgent {
     const key = apiKey || config.getApiKey();
 
     this.client = new OpenAI({
-      apiKey: key,
+      apiKey: clientApiKey(key),
       baseURL: url,
     });
     this.orchestrator = new Orchestrator(key, url);
@@ -206,7 +206,7 @@ export class AIAgent {
     const baseURL = modelConfig.baseURL || process.env.OPENAI_BASE_URL || 'http://host.docker.internal:22434';
 
     return new OpenAI({
-      apiKey,
+      apiKey: clientApiKey(apiKey),
       baseURL,
     });
   }
@@ -288,19 +288,29 @@ export class AIAgent {
         timestamp: new Date(),
       });
 
-      // Summarize the conversation
-      this.conversationHistory = await this.tokenManager.summarizeConversation(
-        this.conversationHistory,
-        this.client,
-        10 // Keep last 10 messages
-      );
+      // Summarize the conversation with the active model
+      try {
+        this.conversationHistory = await this.tokenManager.summarizeConversation(
+          this.conversationHistory,
+          this.client,
+          this.modelName,
+          10 // Keep last 10 messages
+        );
 
-      const newUsage = this.tokenManager.getUsage(this.conversationHistory);
-      onThinking?.({
-        type: 'planning',
-        content: `Conversation summarized. Token usage reduced from ${usage.percentageUsed.toFixed(1)}% to ${newUsage.percentageUsed.toFixed(1)}%`,
-        timestamp: new Date(),
-      });
+        const newUsage = this.tokenManager.getUsage(this.conversationHistory);
+        onThinking?.({
+          type: 'planning',
+          content: `Conversation summarized. Token usage reduced from ${usage.percentageUsed.toFixed(1)}% to ${newUsage.percentageUsed.toFixed(1)}%`,
+          timestamp: new Date(),
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        onThinking?.({
+          type: 'planning',
+          content: `Warning: ${reason}. Conversation history was kept as-is; the request may exceed the context window.`,
+          timestamp: new Date(),
+        });
+      }
     }
 
     this.conversationHistory.push({
