@@ -69,8 +69,11 @@ jobs:
       - name: Type-check and build
         run: npm run build
 
+      # npm logs trusted-publishing (OIDC) failures only at verbose level and
+      # then falls back to setup-node's placeholder token, which surfaces as a
+      # bare E404. Verbose output shows the real reason; npm redacts tokens.
       - name: Publish to npm
-        run: npm publish
+        run: npm publish --loglevel verbose
 
       - name: Create GitHub Release
         env:
